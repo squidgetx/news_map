@@ -1,0 +1,10 @@
+mediacloud
+numpy
+scipy
+matplotlib
+sklearn
+nltk
+gensim
+simplecoremidi
+pandas
+np
