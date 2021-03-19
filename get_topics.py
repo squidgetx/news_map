@@ -1,11 +1,13 @@
 # Python script to take an input corpus and output topics
 from nltk.tokenize import sent_tokenize
+import json
 from nltk.tokenize import word_tokenize
 from nltk import pos_tag
 from nltk.corpus import stopwords
 import itertools
 from gensim import corpora
 from gensim import models
+import gensim
 from gensim.test.utils import datapath
 import fileinput
 import logging
@@ -13,45 +15,150 @@ import argparse
 from sklearn.manifold import TSNE
 import pandas as pd
 import numpy as np
+import gensim.downloader as api
+from gsdmm import MovieGroupProcess
+
+import pdb
+
+OTHER_STOPWORDS = ['say', 'get', 'go', 'know', 'may', 'need', 'like', 'make', 
+    'see', 'want', 'come', 'take', 'use', 'would', 'can', 'one', 'mr', 
+    'bbc', 'image', 'getty', 'de', 'en', 'caption', 'also', 'copyright', 
+    'something', 'Watch', 'CNET', 'Video', 'Fox', 'Update', 'guardian', 'times',
+    'business_insider', 'coronavirus', 'cnet', 'says', 'speaks', 'watch_live',
+    'abc_news', 'york_times']
+#COVID_KEYWORDS = [
+#    'coronavirus', 'covid', 'covid-19', 'covid19', 'virus', 'masks', 'lockdown', 'quarantine'
+
+#]
+CORES = 4
+num_topics = 10
 
 
-OTHER_STOPWORDS = ['say', 'get', 'go', 'know', 'may', 'need', 'like', 'make', 'see', 'want', 'come', 'take', 'use', 'would', 'can', 'one', 'mr', 'bbc', 'image', 'getty', 'de', 'en', 'caption', 'also', 'copyright', 'something']
-num_topics = 20
+from io import StringIO
+from html.parser import HTMLParser
+
+class MLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs= True
+        self.text = StringIO()
+    def handle_data(self, d):
+        self.text.write(d)
+    def get_data(self):
+        return self.text.getvalue()
+
+def strip_tags(html):
+    s = MLStripper()
+    s.feed(html)
+    return s.get_data()
+
+def sent_to_words(sentences):
+    for sentence in sentences:
+        yield(gensim.utils.simple_preprocess(str(sentence), deacc=True))
+
+def clean(df):
+    # clean df
+    if 'stories_id' in df:
+        df = df.drop_duplicates(subset=['stories_id'])
+    df = df.dropna(subset=['title'])
+    df = df.sample(frac=args.sample)
+    sentences = df['title'].replace(r'\\n',' ', regex=True)
+    df['title'] = [strip_tags(s) for s in df['title']]
+    return df
+
 
 def get_dict_corpus(sentences):
-    sentences = [word_tokenize(s) for s in sentences]
-    # skip lemmatizing for now
+    # Tokenize and remove punctuation
+    sentences = [gensim.utils.simple_preprocess(s, deacc=True) for s in sentences]
+    print("done preprocessing")
+    #all_words = list(itertools.chain.from_iterable(sentences))
+
+    # Build the bigram and trigram models
+    bigram = gensim.models.Phrases(sentences, min_count=5, threshold=100) # higher threshold fewer phrases.
+    trigram = gensim.models.Phrases(bigram[sentences], threshold=100)
+    # Faster way to get a sentence clubbed as a trigram/bigram
+    bigram_mod = gensim.models.phrases.Phraser(bigram)
+    trigram_mod = gensim.models.phrases.Phraser(trigram)
+
+    def make_bigrams(texts):
+        return [bigram_mod[doc] for doc in texts]
+    def make_trigrams(texts):
+        return [trigram_mod[bigram_mod[doc]] for doc in texts]
+    
+    words_bigrams = make_bigrams(sentences)
+    words_trigrams = make_trigrams(sentences)
+
     swords = stopwords.words('English') + OTHER_STOPWORDS
-    all_words = list(itertools.chain.from_iterable(sentences))
-    all_words = [ w for w in all_words if w.isalpha() and w.lower() not in swords and len(w) > 1 ]
-    dictionary_LDA = corpora.Dictionary([all_words])
-    corpus = [dictionary_LDA.doc2bow(sentence) for sentence in sentences]
+    words_trigrams_no_stop = [[w for w in sent if w not in swords and len(w) > 1] for sent in words_trigrams]
+
+    dictionary_LDA = corpora.Dictionary(words_trigrams_no_stop)
+    corpus = [dictionary_LDA.doc2bow(w) for w in words_trigrams_no_stop]
     return dictionary_LDA, corpus
+
+
+def sentences_to_gdsmm(sentences):
+    dictionary, corpus = get_dict_corpus(sentences)
+    # corpus is the list of documents in token, BOW format.
+    # a sequence of tuples where the first entry is the token ID, and the second is the count of that token
+    corpus_tokens = [[a[0] for a in sent] for sent in corpus]
+    max_token = max([max(a) for a in corpus_tokens])
+    mgp = MovieGroupProcess(K=8, alpha=0.1, beta=0.1, n_iters=30)
+    mgp.fit(corpus_tokens, max_token)
+    topics = mgp.cluster_word_distribution
+    # array of BOW dicts of token ids
+    scores = [mgp.score(sentence) for sentence in corpus]
+    # return topics represented as dicts of word => val
+    # return scores represented as array (len docs) of arrays (len topics)
+    mapping = {v: k for k, v in dictionary.token2id.items()}
+    topics_words = [
+        {
+            mapping[key]: val for key, val in dist.items()
+        } for dist in topics
+    ]
+    return topics_words, scores
+
 
 
 def sentences_to_topic_model(sentences):
     # first, clean:
-    #dictionary_LDA.filter_extremes(no_below=2)
     dictionary, corpus = get_dict_corpus(sentences)
-    model = models.LdaModel(corpus, num_topics=num_topics, 
-                                  id2word=dictionary, 
-                                  passes=4, alpha=[0.01]*num_topics, 
-                                  eta=[0.01]*len(dictionary.keys()))
-
-  
-    return dictionary, corpus, model
+    model = models.LdaModel(
+        corpus, 
+        num_topics=num_topics, 
+        id2word=dictionary, 
+        chunksize=8000,
+        passes=8, 
+        alpha='auto',
+        eta='auto',
+    )
+    scores = [model[c] for c in corpus]
+    topic_ndarray = model.get_topics()
+    # convert the ndarray to dict
+    mapping = {v: k for k, v in dictionary.token2id.items()}
+    topics = []
+    for row in topic_ndarray:
+        topic = {}
+        for i, val in enumerate(row):
+            if val > 0:
+                topic[mapping[i]] = val
+    return topics, scores
 
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(
-        description='Train LDA topic model on input text'
+        description='Train topic model on input text'
     )
-    parser.add_argument('-save', dest='save', required=False,
-                        help='filename for saved model file')
-    parser.add_argument('-load', dest='load', required=False,
-                        help='filename for saved model file')
     parser.add_argument('-train', dest='train', required=True,
                         help='filename for training')
+    parser.add_argument('-sample', dest='sample', required=False, type=float,
+            default=1, help='sample rate')
+    parser.add_argument('-num-topics', dest='num_topics', required=False, type=int,
+        default=20, help='number of topics')
+    parser.add_argument('-method', dest='method', required=False, 
+        choices=['LDA', 'GDSMM'], default='GDSMM',
+        help='topic model to use')
     args = parser.parse_args()
 
     logging.info(f"Opening training file {args.train}")
@@ -59,57 +166,25 @@ if __name__ == '__main__':
     dictionary = None
     corpus = None
     sentences = None
-    with open(args.train, 'rt') as f:
-        sentences = [line for line in f]
-    if args.load:
-        logging.info(f"Loading saved model file {args.load}")
-        model = models.LdaModel.load(datapath(args.load))
-        dictionary, corpus = get_dict_corpus(sentences)
+    df = pd.read_csv(args.train, sep='\t') 
+
+    df = clean(df)
+    sentences = df['title']
+
+
+    logging.info(f"Training model...")
+    if (args.method == 'LDA'):
+        topics, scores = sentences_to_topic_model(sentences)
     else:
-        logging.info(f"Training model...")
-        dictionary, corpus, model = sentences_to_topic_model(sentences)
+        topics, scores = sentences_to_gdsmm(sentences)
 
-    if args.save:
-        logging.info(f"Model saved to {args.save}")
-        lda.save(datapath(args.save))
-    
-    if not model:
-        logging.error("Model failed to load")
-        exit()
+    # export the topic scores to headline_topics.tsv
+    df = pd.DataFrame(scores).fillna(0)
+    df['dominant_topic'] = np.argmax(df.values, axis=1)
+    df['title'] = sentences.reset_index()['title']
+    df.to_csv('headline_topics.tsv', sep='\t', index=False)
 
-    topic_scores = [model[c] for c in corpus]
-    with open('topics.tsv', 'wt') as f:
-        f.write('n\ttopic\n')
-        for i,topic in model.show_topics(formatted=True, num_topics=num_topics, num_words=20):
-            f.write(str(i)+"\t"+ topic)
-            f.write('\n')
-    with open('output.tsv', 'wt') as f:
-        f.write('headline\ttopic\tprobability\n')
-        for i,t in enumerate(topic_scores):
-            for score in t:
-                f.write(f"{sentences[i]}\t{score[0]}\t{score[1]}\n")
+    # export the topic descriptions to topics.json
+    with open('topics.json', 'wt') as f:
+        f.write(json.dumps(topics))
 
-    topic_weights = []
-    for weights in topic_scores: 
-        topic_weights.append({w[0]: w[1] for w in weights})
-
-    # Array of topic weights    
-    arr = pd.DataFrame(topic_weights).fillna(0).values
-
-    # Keep the well separated points (optional)
-    #arr = arr[np.amax(arr, axis=1) > 0.35]
-
-    # Dominant topic number in each doc
-    topic_num = np.argmax(arr, axis=1)
-
-    # tSNE Dimension Reduction
-    tsne_model = TSNE(n_components=2, verbose=1, random_state=0, angle=.99, init='pca')
-    tsne_lda = tsne_model.fit_transform(arr)
-    with open('tsne.tsv', 'wt') as f:
-        f.write('headline\tx\ty\tt\n')
-        for i, t in enumerate(tsne_lda):
-            f.write(f"{sentences[i].strip()}\t{t[0]}\t{t[1]}\t{topic_num[i]}\n")
-            # bug? dup rows?
-
-
-    

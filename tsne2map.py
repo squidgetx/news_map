@@ -9,6 +9,7 @@ from time import sleep
 import numpy as np
 import scipy.spatial as spatial
 from scipy.spatial import KDTree 
+import scipy.stats as stats
 import sys
 from collections import defaultdict
 
@@ -27,7 +28,6 @@ class PolygonMap:
         n -- the number of points
         """ 
         # init healines to empty array of arrays
-        self.headlines = [[] for i in range(n+1)]
 
         # fill with n random 2D vectors
         self.pts = np.random.random((n, 2))
@@ -35,6 +35,9 @@ class PolygonMap:
         # use lloyd relaxation to space them better
         self.pts = PolygonMap.improve_points(self.pts)
         self.vor = spatial.Voronoi(self.pts)
+        self.n_regions = len(self.vor.regions)
+        self.headlines = [[] for i in range(self.n_regions)]
+        self.topics = [[] for i in range(self.n_regions)]
 
         # use KT tree to provide nearest neighbor lookups for occasional grid based operation
         self.tree = KDTree(self.pts)
@@ -56,7 +59,7 @@ class PolygonMap:
         self.edges = np.asarray([-1 in region for region in self.vor.regions])
 
         # make a list of each region's elevation. initialize to zero
-        self.elevation = np.zeros(n + 1)
+        self.elevation = np.zeros(self.n_regions)
 
     @staticmethod
     def improve_points(pts, n=3):
@@ -83,12 +86,31 @@ class PolygonMap:
             pts = newpts
         return np.asarray(pts)
 
-    def add_headline(self, headline, x, y):
+    def manual_search(self, x, y):
+        dist = 10
+        dist_i = -1
+        for i, pt in enumerate(self.pts):
+            di = np.linalg.norm([x, y] - pt)
+            if di < dist:
+                dist = di
+                dist_i = i
+
+        return dist, dist_i
+
+
+    def add_headline(self, headline, dominant_topic, x, y):
         # Add a headline with X, Y coordinate
         # This adds 1 to the elevation of the corresponding Voronoi region
-        _, region_i = self.tree.query([x, y])
+        _, point_i = self.tree.query([x, y])
+       # _, point_i = self.manual_search(x, y)
+        if (point_i >= len(self.vor.points)):
+            print(f"{headline} could not be placed")
+            return
+        region_i = self.vor.point_region[point_i]
+
         self.elevation[region_i] += 1
         self.headlines[region_i].append(headline)
+        self.topics[region_i].append(dominant_topic)
     
     def export(self):
         """
@@ -97,6 +119,8 @@ class PolygonMap:
         We might need to build a backend LOL
         We'll just dump the points, edges, and elevations basically
         """
+        df = pd.DataFrame(self.pts, columns=['x', 'y'])
+        df.to_csv('points.tsv', sep='\t')
         df = pd.DataFrame(self.vor.vertices, columns=['x', 'y'])
         df.to_csv('vertices.tsv', sep='\t')
 
@@ -105,6 +129,9 @@ class PolygonMap:
         df['coordinates'] = self.vor.regions
         df['headlines'] = self.headlines
         df['is_edge'] = self.edges
+        # ugly but i hate np
+        df['topics'] = [stats.mode(a).mode for a in self.topics]
+        df['topics'] = [a[0] if a.size > 0 else -1 for a in df['topics']]
 
         df.to_csv('regions.tsv', sep='\t')
 
@@ -114,9 +141,11 @@ if __name__ == '__main__':
     )
     parser.add_argument('-filename', dest='filename', required=True,
                         help='filename for input tsne data')
+    parser.add_argument('-n', dest='n', required=False, default=1024, type=int,
+        help='number of polygons to create')
     args = parser.parse_args()
 
-    m = PolygonMap(128)
+    m = PolygonMap(args.n)
     df = pd.read_csv(args.filename, sep='\t')
     # scale the x and y appropriately. Must be scaled together, not separately!
     xmin = np.min(df['x'])
@@ -130,7 +159,8 @@ if __name__ == '__main__':
     df['y'] += largest
     df['x'] /= largest * 2
     df['y'] /= largest * 2
+    import pdb;
 
     for index, row in df.iterrows():
-        m.add_headline(row['headline'], row['x'], row['y'])
+        m.add_headline(row['title'], row['dominant_topic'], row['x'], row['y'])
     m.export()

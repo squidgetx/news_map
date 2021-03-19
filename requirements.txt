@@ -8,3 +8,4 @@ gensim
 simplecoremidi
 pandas
 np
+tsnecuda

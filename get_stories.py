@@ -58,7 +58,7 @@ def get_continue_params(metadata):
 
 def save(stories, query, error=False, exc=""):
     if error:
-        print(f"Ran into error! {exc}")
+        print(f"Ran into error!")
     print(f"fetched {len(stories)} total!")
     if stories:
         query['last_processed_id'] = stories[-1]['processed_stories_id']
@@ -140,7 +140,7 @@ if __name__=='__main__':
         signal.alarm(TIMEOUT)
         try:
             fetched_stories = mc.storyList(
-                f'coronavirus AND tags_id_media:{US_NATIONAL_TAG}',
+                f'coronavirus AND tags_id_media:{US_MAINSTREAM}',
                 # default to today
                 solr_filter=mc.dates_as_query_clause(start, end), 
                 last_processed_stories_id=last_processed_stories_id, rows= BATCH_SIZE)
