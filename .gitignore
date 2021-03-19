@@ -1,0 +1,13 @@
+*.tsv
+*.csv
+.venv
+.vscode
+.DS_Store
+__pycache__
+*.json
+*.code-workspace
+.R*
+creds.sh
+glove.6B
+docs
+
