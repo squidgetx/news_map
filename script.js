@@ -1,4 +1,3 @@
-
 const SIZE = 1024
 let vertex_data, region_data, tsne
 let mode = 0
@@ -29,7 +28,7 @@ function setup() {
             console.log(region_data)
         })
     })
-    drawForceGraph()
+    drawLDAVis()
 }
 
 function drawTSNE() {
@@ -136,8 +135,67 @@ function draw() {
 
 }
 
-function drawForceGraph() {
+function drawLDAVis() {
+    let width = 2;
+    let height = 2;
+    let topics = [];
+    let handleMouseOver = function(ev, d) {
+        let sorted = Object.entries(topics[d.id]).filter(a => a[1] > 2).sort(function(a, b) {
+            return b[1] - a[1];
+        });
+        console.log(sorted)
+        let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).join("")
+        document.getElementById('wordContainer').innerHTML = nodes
+    }
+    let handleMouseOut = function(ev, d) {
+    }
 
+    let vis = function(topic_points) {
+        // array of id, x, y, and eventually sizes
+        let gcolor = function() {
+            const scale = d3.scaleOrdinal(d3.schemeCategory10);
+            return d => scale(parseInt(d.id));
+        }()
+        const svg = d3.create("svg")
+            .attr("viewBox", [-width/2, -height/2, width, height]);
+
+        const link = svg.append("g")
+            //.attr("stroke", "#999")
+            //.attr("stroke-opacity", 0.6)
+        .selectAll("circle")
+        .data(topic_points)
+        .join("circle")
+            .attr("cx", d => d.x)
+            .attr("cy", d => d.y)
+            .attr("r", d => Math.sqrt(d.total) * 0.001)
+            .attr("fill", gcolor)
+            .on('mouseover', handleMouseOver)
+            .on('mouseout', handleMouseOut)
+        return svg.node()
+    }
+    d3.tsv("distancesJS.mds.tsv").then((data) => {
+        distance_data = data.map(d => {
+            return {
+                x: parseFloat(d[0]),
+                y: parseFloat(d[1]),
+                id: parseInt(d[''])
+            }
+        })
+        console.log(data)
+        console.log('loading topics')
+        d3.json("topics.json").then((data) => {
+            topics = data
+            for(k in distance_data) {
+                distance_data[k]["total"] = topics[k]["total"]
+                delete topics[k]['total']
+            }
+            let node = vis(distance_data)
+            document.getElementById('graphContainer').appendChild(node)
+        })
+    })
+}
+
+function drawForceGraph() {
     let width = 1024;
     let height = 1024;
     let gcolor = function() {
