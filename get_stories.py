@@ -20,9 +20,6 @@ SAVE_INTERVAL = 20000
 TIMEOUT = 60
 TIMEOUT_ERROR = "request timed out"
 
-METADATA_FILENAME = "metadata.json"
-DATA_FILENAME = "stories.tsv"
-
 
 class MediaCloudTimeoutException(Exception):
     pass
@@ -60,7 +57,7 @@ def get_continue_params(metadata):
     }
 
 
-def save(stories, query, error=False, exc=""):
+def save(stories, query, error=False, exc="", name=""):
     if error:
         print(f"Ran into error!")
     print(f"fetched {len(stories)} total!")
@@ -70,6 +67,8 @@ def save(stories, query, error=False, exc=""):
         query["last_processed_id"] = 0
 
     df = pd.DataFrame(stories)
+    DATA_FILENAME = f"{name}_us_mainstream_stories.tsv"
+    METADATA_FILENAME = f"{name}_metadata.json"
 
     # chuck the whole thing into a df
     # append without headers if the file exists already, otherwise create a new file
@@ -114,10 +113,15 @@ if __name__ == "__main__":
         required=False,
         help="ISO formatted end date for query (ex: 2020-01-31). Defaults to today.",
     )
+    arg_parser.add_argument(
+        "-keyword", dest="keyword", required=False, help="keyword to search for"
+    )
+
     args = arg_parser.parse_args()
 
     query = {}
     metadata = {}
+    METADATA_FILENAME = f"{args.keyword}_metadata.json"
     if os.path.exists(METADATA_FILENAME):
         with open(METADATA_FILENAME, "rt") as f:
             metadata = json.load(f)
@@ -151,14 +155,14 @@ if __name__ == "__main__":
         signal.alarm(TIMEOUT)
         try:
             fetched_stories = mc.storyList(
-                f"election AND tags_id_media:{US_MAINSTREAM}",
+                f"{args.keyword} AND tags_id_media:{US_MAINSTREAM}",
                 # default to today
                 solr_filter=mc.dates_as_query_clause(start, end),
                 last_processed_stories_id=last_processed_stories_id,
                 rows=BATCH_SIZE,
             )
         except MediaCloudTimeoutException as exc:
-            save(stories, query, error=True, exc=exc)
+            save(stories, query, error=True, exc=exc, name=args.keyword)
             break
         # cancel the alarm
         signal.alarm(0)
@@ -168,7 +172,7 @@ if __name__ == "__main__":
             break
         last_processed_stories_id = stories[-1]["processed_stories_id"]
         if len(stories) >= SAVE_INTERVAL:
-            save(stories, query)
+            save(stories, query, name=args.keyword)
             stories = []
 
-    save(stories, query)
+    save(stories, query, name=args.keyword)

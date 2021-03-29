@@ -1,34 +1,49 @@
 const SIZE = 1024
-let vertex_data, region_data, tsne
+let vertex_data, region_data, tsne, topics, topicSizes
 let mode = 0
+let month = 2
+const TOPIC = 'us_mainstream_stories_clean'
+
+function getName(month, suffix){
+    let monthStr = month
+    let monthStr2 = month + 1
+    if (month < 10) {
+        monthStr = '0' + month
+    }
+    if (monthStr2 < 10) {
+        monthStr2 = '0' + monthStr2
+    }
+    return `data/${TOPIC}_2020-${monthStr}-01_2020-${monthStr2}-01.${suffix}`
+}
 
 function setup() {
     createCanvas(SIZE, SIZE)
-    d3.tsv("pca.tsv").then(function(data) {
-        tsne = data.map(d => {
-            return {
-                x: parseFloat(d.x),
-                y: parseFloat(d.y), 
-                headline: d.headline
-            }
-        })
+   drawMaster()
+    
+}
+
+function drawMaster() {
+
+let topicName = getName(month, 'topics.json')
+    d3.json(topicName).then((topicData) => {
+        topics = topicData
+        topicSizes = []
+        for(k in topics) {
+            topicSizes[k] = topics[k]["total"]
+            delete topics[k]["total"]
+        }
+        document.getElementById('graphContainer').innerHTML = `<h2>${month}</h2>`
+        drawForceGraph()
     })
-    d3.tsv("vertices.tsv").then(function(data) {
-        vertex_data = data
-        d3.tsv("regions.tsv").then(function(data) {
-            region_data = data.map(d => { 
-                return {
-                    elevation: parseFloat(d.elevation),
-                    isEdge: d.is_edge == 'true',
-                    coordinates: JSON.parse(d.coordinates),
-                    headlines: d.headlines,
-                    dominant_topic: parseInt(d.topics)
-                }
-            })
-            console.log(region_data)
-        })
-    })
-    drawLDAVis()
+}
+
+function keyPressed() {
+    if (keyCode === LEFT_ARROW) {
+        month -= 1
+    } else if (keyCode === RIGHT_ARROW) {
+        month += 1
+    }
+    drawMaster()
 }
 
 function drawTSNE() {
@@ -135,18 +150,20 @@ function draw() {
 
 }
 
+let handleMouseOver = function(ev, d) {
+    let sorted = Object.entries(topics[d.id]).filter(a => a[1] > 2).sort(function(a, b) {
+        return b[1] - a[1];
+    });
+    let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).join("")
+    document.getElementById('wordContainer').innerHTML = `<p>${d.id}</p>`
+    document.getElementById('wordContainer').innerHTML += nodes
+}
+
 function drawLDAVis() {
     let width = 2;
     let height = 2;
     let topics = [];
-    let handleMouseOver = function(ev, d) {
-        let sorted = Object.entries(topics[d.id]).filter(a => a[1] > 2).sort(function(a, b) {
-            return b[1] - a[1];
-        });
-        console.log(sorted)
-        let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).join("")
-        document.getElementById('wordContainer').innerHTML = nodes
-    }
+    
     let handleMouseOut = function(ev, d) {
     }
 
@@ -159,21 +176,38 @@ function drawLDAVis() {
         const svg = d3.create("svg")
             .attr("viewBox", [-width/2, -height/2, width, height]);
 
-        const link = svg.append("g")
-            //.attr("stroke", "#999")
-            //.attr("stroke-opacity", 0.6)
-        .selectAll("circle")
-        .data(topic_points)
-        .join("circle")
+        const nodes = svg.append("g")
+            .selectAll("circle")
+            .data(topic_points)
+            .join("g")
+
+        nodes
+            .append('circle')
             .attr("cx", d => d.x)
             .attr("cy", d => d.y)
             .attr("r", d => Math.sqrt(d.total) * 0.001)
             .attr("fill", gcolor)
             .on('mouseover', handleMouseOver)
             .on('mouseout', handleMouseOut)
+        nodes
+            .append('text')
+            .style("font-size", d => Math.sqrt(d.total) * 0.001)
+            .attr('x', d => d.x)
+            .attr('y', d => d.y)
+            .html(d => d.id)
         return svg.node()
     }
-    d3.tsv("distancesJS.mds.tsv").then((data) => {
+
+    let monthStr = month
+    let monthStr2 = month + 1
+    if (month < 10) {
+        monthStr = '0' + month
+    }
+    if (monthStr2 < 10) {
+        monthStr2 = '0' + monthStr2
+    }
+    let tsvname = `distancesJS_${TOPIC}_2020-${monthStr}-01_2020-${monthStr2}-01.mds.tsv`
+    d3.tsv(tsvname).then((data) => {
         distance_data = data.map(d => {
             return {
                 x: parseFloat(d[0]),
@@ -181,15 +215,15 @@ function drawLDAVis() {
                 id: parseInt(d[''])
             }
         })
-        console.log(data)
         console.log('loading topics')
-        d3.json("topics.json").then((data) => {
+        d3.json(`topics_${TOPIC}_2020-${monthStr}-01_2020-${monthStr2}-01.json`).then((data) => {
             topics = data
             for(k in distance_data) {
                 distance_data[k]["total"] = topics[k]["total"]
                 delete topics[k]['total']
             }
             let node = vis(distance_data)
+            document.getElementById('graphContainer').innerHTML = `<h2>${month}</h2>`
             document.getElementById('graphContainer').appendChild(node)
         })
     })
@@ -203,26 +237,20 @@ function drawForceGraph() {
         return d => scale(parseInt(d.id));
       }();
     let graph = function(data) {
-        console.log(data)
-        const links = data.links.filter(d => parseFloat(d.value) > 0.1).map(d => {
+        const links = data.links.map(d => {
             return { 
                 source: parseInt(d.source),
                 target: parseInt(d.target),
                 value: parseFloat(d.value)
         }})
         const nodes = data.nodes.map(d => Object.create(d));
-        let col = cola.d3adaptor(d3).size([width, height]);
     
-        console.log(nodes)
-        console.log(links)
-        const simulation = col 
-            .nodes(nodes)
-            .links(links)
-            .linkDistance(n => (1 - n.value ** 2) * 100)
-            .start(30)
-            //.force("link", d3.forceLink(links).id(d => d.id).distance(d => parseFloat(d.value) ** 4))
-            //.force("charge", d3.forceManyBody().strength(-10))
-            //.force("center", d3.forceCenter(width / 2, height / 2));
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(links).id(d=>d.id))
+            //.force("collision", d => Math.sqrt(topicSizes[int(d.id)] * 0.3))
+            .force("charge", d3.forceManyBody().strength(d => -Math.sqrt(topicSizes[int(d.id)])))
+            .force("center", d3.forceCenter(width / 2, height / 2).strength(0.1))
+            
     
         const svg = d3.create("svg")
             .attr("viewBox", [0, 0, width, height]);
@@ -241,30 +269,32 @@ function drawForceGraph() {
         .selectAll("circle")
         .data(nodes)
         .join("circle")
-            .attr("r", 5)
+            .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.3)
             .attr("fill", gcolor)
-            //.call(drag(simulation));
+            .on('mouseover', handleMouseOver)
     
         node.append("title")
             .text(d => d.id);
     
-        col.on("tick", () => {
-        link
-            .attr("x1", d => d.source.x)
-            .attr("y1", d => d.source.y)
-            .attr("x2", d => d.target.x)
-            .attr("y2", d => d.target.y);
-    
-        node
-            .attr("cx", d => d.x)
-            .attr("cy", d => d.y);
-        });
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+        
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+            });
     
         //invalidation.then(() => simulation.stop());
     
         return svg.node();
     }
-    d3.json("topic_adjacency.json").then((data) => {
+    let jsonName = getName(month, 'topic_adjacency.json')
+    console.log(jsonName)
+    d3.json(jsonName).then((data) => {
         document.getElementById('graphContainer').appendChild(graph(data))
     })
 }
