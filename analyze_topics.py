@@ -6,6 +6,7 @@ import logging
 import argparse
 import pandas as pd
 import numpy as np
+import networkx as nx
 
 from collections import defaultdict
 import matplotlib.pyplot as plt
@@ -79,14 +80,7 @@ def build_graph(distances):
     return {"nodes": [{"id": node_id} for node_id in edges], "links": links}
 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(description="Train LDA topic model on input text")
-    parser.add_argument(
-        "-name", dest="name", required=True, help="filename for training"
-    )
-    args = parser.parse_args()
-    name = args.name
+def build_and_save_graph(name):
 
     df = pd.read_csv(getFile(name, Datafile.DISTANCE_JS), sep="\t", index_col=0)
 
@@ -99,6 +93,26 @@ if __name__ == "__main__":
     data = build_graph(edges)
     with open(getFile(name, Datafile.TOPIC_ADJACENCY), "wt") as f:
         json.dump(data, f)
+
+
+def layout_graph(data):
+    graph = nx.Graph()
+    graph.add_nodes_from([n["id"] for n in data["nodes"]])
+    graph.add_weighted_edges_from(
+        [(n["value"], n["source"], n["target"]) for n in data["links"]]
+    )
+    pos = nx.drawing.layout.spring_layout(graph)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="Train LDA topic model on input text")
+    parser.add_argument(
+        "-name", dest="name", required=True, help="filename for training"
+    )
+    args = parser.parse_args()
+    name = args.name
+    build_graph_from_name(name)
 
     """
     dominant_topics = df.idxmax(axis=1)

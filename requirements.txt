@@ -8,3 +8,5 @@ gensim
 pandas
 np
 pyemd
+cython
+fitsne

@@ -1,8 +1,9 @@
 const SIZE = 1024
-let vertex_data, region_data, tsne, topics, topicSizes
+let vertex_data, region_data, tsne, topics
+let topicSizes = topicMediaNames = []
 let mode = 0
 let month = 2
-const TOPIC = 'us_mainstream_stories_clean'
+const TOPIC = 'us_mainstream_stories'
 
 function getName(month, suffix){
     let monthStr = month
@@ -29,10 +30,12 @@ let topicName = getName(month, 'topics.json')
         topics = topicData
         topicSizes = []
         for(k in topics) {
-            topicSizes[k] = topics[k]["total"]
-            delete topics[k]["total"]
+            topicSizes[k] = topics[k]["_metadata_"]["total"]
+            topicMediaNames[k] = topics[k]["_metadata_"]["media_names"]
+            delete topics[k]["_metadata_"]
         }
-        document.getElementById('graphContainer').innerHTML = `<h2>${month}</h2>`
+        monthStr = ["January", "February", 'March', 'April'][month - 1]
+        document.getElementById('graphContainer').innerHTML = `<h2>News Landscape ${monthStr} 2020</h2>`
         drawForceGraph()
     })
 }
@@ -156,6 +159,13 @@ let handleMouseOver = function(ev, d) {
     });
     let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).join("")
     document.getElementById('wordContainer').innerHTML = `<p>${d.id}</p>`
+    let medianodes = ''
+    for (mname in topicMediaNames[d.id]) {
+        if (topicMediaNames[d.id][mname] > 2) {
+            medianodes += `<p class='sm'>${mname}: ${topicMediaNames[d.id][mname]}`
+        }
+    }
+    document.getElementById('wordContainer').innerHTML = `<p>${d.id}</p>` + medianodes
     document.getElementById('wordContainer').innerHTML += nodes
 }
 

@@ -21,6 +21,7 @@ from gsdmm import MovieGroupProcess
 from scipy.spatial.distance import jensenshannon
 
 import topic2mds
+import analyze_topics
 import subprocess
 from names import Datafile, getFile
 from wmdistance import WMDistance
@@ -422,7 +423,7 @@ if __name__ == "__main__":
         df = pd.read_csv(args.train, sep="\t")
         print(f"Reading {len(df)} rows...")
         df = clean(df)
-        df[["title", "publish_date", "stories_id"]].to_csv(
+        df[["title", "publish_date", "stories_id", "media_name"]].to_csv(
             f"{basename}_clean.tsv", sep="\t"
         )
         if args.start and args.end:
@@ -442,16 +443,20 @@ if __name__ == "__main__":
         elif args.method == "GSDMM":
             dictionary, topics, scores = sentences_to_gsdmm(sentences, args.num_topics)
 
-        print("exporting headline_topics.tsv")
+        print("exporting dictionary and nparray")
 
         # export everything
         dictionary.save(getFile(name, Datafile.DICTIONARY))
         np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
 
+        print("preparing scores")
+        media_names = df["media_name"].fillna("No Media Name")
         df = pd.DataFrame(scores).fillna(0)
         df.to_csv(getFile(name, Datafile.SCORES), sep="\t", index=False)
-        df["dominant_topic"] = np.argmax(df.values, axis=1)
+        df["dominant_topic"] = df.idxmax(axis=1)
         df["title"] = sentences.reset_index()["title"]
+        df["media_name"] = media_names
+        grouped = df.groupby(["dominant_topic", "media_name"]).count()["title"]  #
         # df.to_csv(f"headline_topics_{name}.tsv", sep="\t", index=False)
         totals = df.sum()
 
@@ -460,7 +465,13 @@ if __name__ == "__main__":
         # export the topic descriptions to topics.json
         topics_dict = topic_ndarray_to_dict(dictionary, topics)
         for k in range(len(topics_dict)):
-            topics_dict[k]["total"] = totals.get(int(k), 0)
+            topics_dict[k]["_metadata_"] = {"total": 0, "media_names": {}}
+            topics_dict[k]["_metadata_"]["total"] = totals.get(int(k), 0)
+            if int(k) in grouped:
+                topics_dict[k]["_metadata_"]["media_names"] = grouped.get(
+                    int(k)
+                ).to_dict()
+
         with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
             f.write(json.dumps(topics_dict))
     elif args.load:
@@ -482,3 +493,5 @@ if __name__ == "__main__":
 
     print("calculating MDS")
     topic2mds.calculateMDS(name)
+    print("building topic adjacency graph")
+    analyze_topics.build_and_save_graph(name)

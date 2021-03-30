@@ -1,3 +1,8 @@
+.sm {
+  font-size: 10pt;
+  margin: 0;
+}
+
 #regionsSVGContainer {
   width: 1024px;
   height: 1024px;
@@ -36,7 +41,9 @@ path.selected {
   display: inline-block;
 }
 
-.wordContainer,
-.graphContainer {
-  display: inline-block;
+#wordContainer {
+  position: absolute;
+  width: 512px;
+  right: 0;
+  top: 0;
 }
