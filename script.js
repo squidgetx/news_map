@@ -18,7 +18,7 @@ function getName(month, suffix){
 }
 
 function setup() {
-    createCanvas(SIZE, SIZE)
+    //createCanvas(SIZE, SIZE)
    drawMaster()
     
 }
@@ -34,10 +34,35 @@ let topicName = getName(month, 'topics.json')
             topicMediaNames[k] = topics[k]["_metadata_"]["media_names"]
             delete topics[k]["_metadata_"]
         }
-        monthStr = ["January", "February", 'March', 'April'][month - 1]
-        document.getElementById('graphContainer').innerHTML = `<h2>News Landscape ${monthStr} 2020</h2>`
+        let min = 2;
+        let max = 3;
+        let prevDisabled = ''
+        let nextDisabled = ''
+        if (month == min) {
+            prevDisabled = 'disabled'
+        }
+        if (month == max) {
+            nextDisabled = 'disabled'
+        }
+        monthStr = ["January", "February", 'March', 'April', 'May']
+        //document.getElementById('graphContainer').innerHTML = `<h2>News Landscape ${monthStr} 2020</h2>`
+        document.getElementById('graphContainer').innerHTML = `<h2>2020 News Landscape </h2>`
+        document.getElementById('graphContainer').innerHTML += 
+            `<button onclick="prevMonth()" ${prevDisabled}>< ${monthStr[month - 2]}</button> `
+        document.getElementById('graphContainer').innerHTML += `<span class="month">${monthStr[month - 1]}</span> `
+        document.getElementById('graphContainer').innerHTML += 
+            `<button onclick="nextMonth()" ${nextDisabled}>${monthStr[month]} ></button>`
         drawForceGraph()
     })
+}
+
+function nextMonth() {
+    month += 1
+    drawMaster()
+}
+function prevMonth() {
+    month -= 1
+    drawMaster()
 }
 
 function keyPressed() {
@@ -72,6 +97,7 @@ function reset() {
 }
 
 function mouseClicked() {
+    /*
     mode  = (mode + 1) % 3
     reset();
     if (mode == 0) {
@@ -81,6 +107,7 @@ function mouseClicked() {
     } else if (mode == 2) {
         drawForceGraph()
     }
+    */
 }
 
 function drawRegions() {
@@ -154,10 +181,13 @@ function draw() {
 }
 
 let handleMouseOver = function(ev, d) {
+    d3.select(this).transition()
+        .duration(0.1)
+        .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.35)
     let sorted = Object.entries(topics[d.id]).filter(a => a[1] > 2).sort(function(a, b) {
         return b[1] - a[1];
     });
-    let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).join("")
+    let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).slice(0, 20).join("")
     document.getElementById('wordContainer').innerHTML = `<p>${d.id}</p>`
     let medianodes = ''
     for (mname in topicMediaNames[d.id]) {
@@ -165,8 +195,15 @@ let handleMouseOver = function(ev, d) {
             medianodes += `<p class='sm'>${mname}: ${topicMediaNames[d.id][mname]}`
         }
     }
-    document.getElementById('wordContainer').innerHTML = `<p>${d.id}</p>` + medianodes
+    document.getElementById('wordContainer').innerHTML = '<h3>Commonly spoken words in this region</h3>'
+    //document.getElementById('wordContainer').innerHTML += medianodes
     document.getElementById('wordContainer').innerHTML += nodes
+}
+
+let handleMouseOut = function(ev, d) {
+ d3.select(this).transition()
+        .duration(0.1)
+        .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.3)
 }
 
 function drawLDAVis() {
@@ -174,8 +211,7 @@ function drawLDAVis() {
     let height = 2;
     let topics = [];
     
-    let handleMouseOut = function(ev, d) {
-    }
+   
 
     let vis = function(topic_points) {
         // array of id, x, y, and eventually sizes
@@ -282,6 +318,7 @@ function drawForceGraph() {
             .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.3)
             .attr("fill", gcolor)
             .on('mouseover', handleMouseOver)
+            .on('mouseout', handleMouseOut)
     
         node.append("title")
             .text(d => d.id);
