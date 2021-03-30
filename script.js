@@ -35,7 +35,7 @@ let topicName = getName(month, 'topics.json')
             delete topics[k]["_metadata_"]
         }
         let min = 2;
-        let max = 3;
+        let max = 4;
         let prevDisabled = ''
         let nextDisabled = ''
         if (month == min) {
@@ -187,7 +187,7 @@ let handleMouseOver = function(ev, d) {
     let sorted = Object.entries(topics[d.id]).filter(a => a[1] > 2).sort(function(a, b) {
         return b[1] - a[1];
     });
-    let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 12}pt'>${d[0]}</p>`).slice(0, 20).join("")
+    let nodes = sorted.map(d => `<p class='word' style='font-size:${Math.sqrt(d[1]) + 6}pt'>${d[0]}</p>`).slice(0, 20).join("")
     document.getElementById('wordContainer').innerHTML = `<p>${d.id}</p>`
     let medianodes = ''
     for (mname in topicMediaNames[d.id]) {
@@ -195,9 +195,10 @@ let handleMouseOver = function(ev, d) {
             medianodes += `<p class='sm'>${mname}: ${topicMediaNames[d.id][mname]}`
         }
     }
-    document.getElementById('wordContainer').innerHTML = '<h3>Commonly spoken words in this region</h3>'
-    //document.getElementById('wordContainer').innerHTML += medianodes
+    document.getElementById('wordContainer').innerHTML = '<h3>Commonly spoken words in this cluster</h3>'
     document.getElementById('wordContainer').innerHTML += nodes
+    document.getElementById('wordContainer').innerHTML += '<h3>Breakdown of headlines in this cluster by media outlet'
+    document.getElementById('wordContainer').innerHTML += medianodes
 }
 
 let handleMouseOut = function(ev, d) {
