@@ -3,7 +3,7 @@ let vertex_data, region_data, tsne, topics
 let topicSizes = topicMediaNames = []
 let mode = 0
 let month = 2
-const TOPIC = 'us_mainstream_stories'
+const TOPIC = 'us_mainstream_stories_trunc'
 
 function getName(month, suffix){
     let monthStr = month
@@ -35,7 +35,7 @@ let topicName = getName(month, 'topics.json')
             delete topics[k]["_metadata_"]
         }
         let min = 2;
-        let max = 4;
+        let max = 6;
         let prevDisabled = ''
         let nextDisabled = ''
         if (month == min) {
@@ -52,7 +52,8 @@ let topicName = getName(month, 'topics.json')
         document.getElementById('graphContainer').innerHTML += `<span class="month">${monthStr[month - 1]}</span> `
         document.getElementById('graphContainer').innerHTML += 
             `<button onclick="nextMonth()" ${nextDisabled}>${monthStr[month]} ></button>`
-        drawForceGraph()
+        drawLayoutGraph()
+        drawRegionsSVG()
     })
 }
 
@@ -84,7 +85,7 @@ function drawTSNE() {
     yMax = d3.max(tsne.map(t => t.y))
     yMin = d3.min(tsne.map(t => t.y))
     let largest = d3.max([Math.abs(xMin), xMax, Math.abs(yMin), yMax])
-    for(pt of tsne) {
+    for(const pt of tsne) {
         let x = (pt.x + largest) / largest / 2
         let y = (pt.y + largest) / largest / 2
         circle(x * SIZE, y * SIZE, 2)
@@ -131,49 +132,73 @@ function drawRegions() {
 
 function drawRegionsSVG() {
     document.getElementById('regionsSVGContainer').hidden = false
-    let svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    svg.setAttribute('viewBox', '0 0 1 1')
-    svg.setAttribute('width', SIZE)
-    svg.setAttribute('height', SIZE)
-    var rainbow = d3.scaleSequential(d3.interpolateRainbow).domain([0, 100])
-    for(const r of region_data) {
-        if (r.isEdge) {
-            continue
-        }
-        let blue = 'rgb(230, 250, 255)'
-        let color = blue
-        if (r.elevation > 0) {
-            let hex = (200 - r.elevation * 2).toString(16)
-            blue = `#${hex}${hex}${hex}`
-            blue = rainbow(r.dominant_topic)
-        }
-        let poly = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-        let points = 'M'
-        for(c of r.coordinates) {
-            if (c != -1) {
-                points += vertex_data[c].x + ',' + vertex_data[c].y + ' '
+    let renderRegionsSVG = function(region_data, vertex_data) {
+        let svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        svg.setAttribute('viewBox', '0 0 1 1')
+        svg.setAttribute('width', SIZE)
+        svg.setAttribute('height', SIZE)
+        var rainbow = d3.scaleSequential(d3.interpolateRainbow).domain([0, 100])
+        for(const r of region_data) {
+            if (r.isEdge) {
+                continue
             }
-        }
-        points = points.slice(0, -1)
-        poly.setAttribute('d', points)
-        poly.setAttribute('style', `fill: ${blue}`)
-        poly.addEventListener('mouseenter', () => {
-            let tooltip = document.getElementById('tooltip')
-            tooltip.innerHTML = `<p>${r.dominant_topic}</p>`
-            let headlinesStr = r.headlines.slice(1, 1000)
-            for(const st of headlinesStr.split('\', \'')) {
-                tooltip.innerHTML += `<p>${st}</p>`
+            let blue = 'rgb(230, 250, 255)'
+            if (r.elevation > 0) {
+                let hex = (Math.floor(map(r.elevation, 0, 5000, 150, 0))).toString(16)
+                blue = `#${hex}${hex}${hex}`
+                //blue = rainbow(r.dominant_topic)
             }
-            poly.classList.add('selected')
-        })
-        poly.addEventListener('mouseleave', () => {
-            poly.classList.remove('selected')
-        })
-        svg.appendChild(poly)
+            let poly = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+            let points = 'M'
+            for(const c of r.coordinates) {
+                if (c != -1) {
+                    points += vertex_data[c].x + ',' + vertex_data[c].y + ' '
+                }
+            }
+            points = points.slice(0, -1)
+            poly.setAttribute('d', points)
+            poly.setAttribute('style', `fill: ${blue}`)
+            poly.addEventListener('mouseenter', () => {
+                let tooltip = document.getElementById('tooltip')
+                tooltip.innerHTML = `<p>${r.elevation}</p>`
+                //let headlinesStr = r.headlines.slice(1, 1000)
+                //for(const st of headlinesStr.split('\', \'')) {
+                //    tooltip.innerHTML += `<p>${st}</p>`
+               // }
+                poly.classList.add('selected')
+            })
+            poly.addEventListener('mouseleave', () => {
+                poly.classList.remove('selected')
+            })
+            svg.appendChild(poly)
+        }
+        return svg
     }
-    console.log("done constructing")
-    document.getElementById('svgContainer').innerHTML = ''
-    document.getElementById('svgContainer').appendChild(svg)
+    d3.tsv(getName(month, 'vertices.tsv')).then(vertexData => {
+        console.log(getName(month, 'regions.tsv'))
+        vertexData = vertexData.map((d, i) => { return {
+            id: i,
+            x: parseFloat(d.x),
+            y: parseFloat(d.y),
+        }})
+        d3.tsv(getName(month, 'regions.tsv')).then(regionData => {
+            regionData = regionData.map((d, i) => { return {
+                id: i,
+                coordinates: JSON.parse(d.coordinates),
+                elevation: parseFloat(d.elevation),
+                headlines: [d.elevation],
+                is_edge: d.is_edge === 'True',
+                dominant_topic: JSON.parse(d.topics)[0],
+            }})
+            console.log(vertexData)
+            console.log(regionData)
+            let svg = renderRegionsSVG(regionData, vertexData)
+            console.log("done constructing")
+            document.getElementById('svgContainer').innerHTML = ''
+            document.getElementById('svgContainer').appendChild(svg)
+
+        })
+    })
 }
 
 function draw() {
@@ -295,8 +320,8 @@ function drawForceGraph() {
         const simulation = d3.forceSimulation(nodes)
             .force('link', d3.forceLink(links).id(d=>d.id))
             //.force("collision", d => Math.sqrt(topicSizes[int(d.id)] * 0.3))
-            .force("charge", d3.forceManyBody().strength(d => -Math.sqrt(topicSizes[int(d.id)])))
-            .force("center", d3.forceCenter(width / 2, height / 2).strength(0.1))
+            .force("charge", d3.forceManyBody().strength(d => -Math.sqrt(topicSizes[int(d.id)]) * 1.2))
+            .force("center", d3.forceCenter(width / 2, height / 2).strength(1))
             
     
         const svg = d3.create("svg")
@@ -307,8 +332,12 @@ function drawForceGraph() {
             .attr("stroke-opacity", 0.6)
         .selectAll("line")
         .data(links)
-        .join("line")
+
+        const linklines = link.join("line")
             .attr("stroke-width", d => Math.sqrt(d.value));
+        const linklabels = link.join("text")
+            .attr('class' ,'linklabel')
+            .html(d=> d.value.toFixed(2))
     
         const node = svg.append("g")
             .attr("stroke", "#fff")
@@ -325,11 +354,14 @@ function drawForceGraph() {
             .text(d => d.id);
     
         simulation.on("tick", () => {
-            link
+            linklines
                 .attr("x1", d => d.source.x)
                 .attr("y1", d => d.source.y)
                 .attr("x2", d => d.target.x)
                 .attr("y2", d => d.target.y);
+            linklabels
+                .attr('x', d=> (d.source.x + d.target.x )/ 2)
+                .attr('y', d=> (d.source.y + d.target.y) / 2)
         
             node
                 .attr("cx", d => d.x)
@@ -341,6 +373,49 @@ function drawForceGraph() {
         return svg.node();
     }
     let jsonName = getName(month, 'topic_adjacency.json')
+    console.log(jsonName)
+    d3.json(jsonName).then((data) => {
+        document.getElementById('graphContainer').appendChild(graph(data))
+    })
+}
+
+
+function drawLayoutGraph() {
+    let width = 1024;
+    let height = 1024;
+    let gcolor = function() {
+        const scale = d3.scaleOrdinal(d3.schemeCategory10);
+        return d => scale(parseInt(d.group));
+      }();
+    let graph = function(data) {
+        const nodes = data.layouts.map((layout, i) => layout.map(d => {
+            return { 
+                group: i,
+                id: parseInt(d.id),
+                x: parseFloat(d.x),
+                y: parseFloat(d.y)
+        }})).flat()
+        console.log(nodes)
+
+        const svg = d3.create("svg")
+            .attr("viewBox", [0, 0, width, height]);
+    
+        const node = svg.append("g")
+            .attr("stroke", "#fff")
+            .attr("stroke-width", 1.5)
+        .selectAll("circle")
+        .data(nodes)
+        .join("circle")
+            .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.3)
+            .attr("cx", d=> d.x * 20)
+            .attr("cy", d=> d.y * 20)
+            .attr("fill", gcolor)
+            .on('mouseover', handleMouseOver)
+            .on('mouseout', handleMouseOut)
+    
+        return svg.node();
+    }
+    let jsonName = getName(month, 'layout.json')
     console.log(jsonName)
     d3.json(jsonName).then((data) => {
         document.getElementById('graphContainer').appendChild(graph(data))

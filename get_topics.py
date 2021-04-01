@@ -296,11 +296,18 @@ def topic_ndarray_to_dict(dictionary, topic_ndarray):
 def get_topic_distances_JS(topics):
     # input: ndarray for each topic
     # output: n_topic * n_topic ndarray of jensen shannon distances for each topic
+    threshold = 50
 
     distances = np.zeros((len(topics), len(topics)))
     for i in range(len(topics)):
         for j in range(i + 1, len(topics)):
-            distances[i][j] = jensenshannon(topics[i], topics[j])
+            thresh_i = np.sort(topics[i])[-threshold]
+            thresh_j = np.sort(topics[j])[-threshold]
+            topic_i = topics[i].copy()
+            topic_j = topics[j].copy()
+            topic_i[topic_i < thresh_i] = 0
+            topic_j[topic_j < thresh_j] = 0
+            distances[i][j] = jensenshannon(topic_i, topic_j)
             distances[j][i] = distances[i][j]
 
     return np.nan_to_num(distances, nan=1.0)
@@ -491,7 +498,7 @@ if __name__ == "__main__":
             getFile(name, Datafile.DISTANCE_WMD), sep="\t"
         )
 
-    print("calculating MDS")
-    topic2mds.calculateMDS(name)
+    # print("calculating MDS")
+    # topic2mds.calculateMDS(name)
     print("building topic adjacency graph")
     analyze_topics.build_and_save_graph(name)

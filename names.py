@@ -10,12 +10,17 @@ class Datafile(Enum):
     DICTIONARY = ".dictionary"
     TOPIC_NDARRAY = ".topic_ndarray.npy"
     TOPIC_JSON = ".topics.json"
+    MEDIA_TOPIC_JSON = ".mediatopics.json"
     SCORES = ".scores.tsv"
     DISTANCE_JS = ".distanceJS.tsv"
     DISTANCE_WMD = ".distanceWMD.tsv"
     MDS = ".mds.tsv"
     TOPIC_ADJACENCY = ".topic_adjacency.json"
+    LAYOUT = ".layout.json"
+    REGIONS_TSV = ".regions.tsv"
+    POINTS_TSV = ".points.tsv"
+    VERTICES_TSV = ".vertices.tsv"
 
 
-def getFile(name, suffix: Datafile):
+def getFile(name: str, suffix: Datafile):
     return f"data/{name}{suffix.value}"

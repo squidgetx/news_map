@@ -16,6 +16,44 @@ from names import getFile, Datafile
 import pdb
 
 
+def get_edges(distances_ndarray, sizes):
+    # which edges to keep:
+    # start assigning edges sorted by closeness
+    # cost of an edge assignment is sum of node degrees * weight
+    # connecting 2 islands: low cost
+    # connecting 2 continents: higher cost
+    # if the edge assignment cost is too high, skip it
+
+    # maybe we actually need a 3-layer joining system to reduce the number of unrelated islands
+    # cuz realistically we can have as many islands as we want off to the side or whatever
+    distances = []
+    for i, row in enumerate(distances_ndarray):
+        for j, value in enumerate(row):
+            if j <= i:
+                continue
+            distances.append((i, j, value))
+    distances = sorted(distances, key=lambda x: x[2])
+
+    edges = []
+    degrees = np.zeros(len(distances_ndarray))
+    for dist in distances:
+        if dist[2] >= 0.9:
+            continue
+        cost = (degrees[dist[0]] + degrees[dist[1]]) * dist[2]
+
+        # sum_degrees = 2 * 0.8 => 1.6
+        # sum_degrees = 3 * 0.8 => 2.4
+        threshold = 2
+        if cost < threshold:
+            degrees[dist[0]] += 1
+            degrees[dist[1]] += 1
+            edge_weight = sizes[dist[0]] + sizes[dist[1]]
+            edges.append((dist[0], dist[1], cost / 2))
+
+    pdb.set_trace()
+    return edges
+
+
 def build_graph(distances):
     """
     given distance array, build graph that we will convert into continent locations
@@ -32,7 +70,7 @@ def build_graph(distances):
             edges[pair["b"]].append({"target": pair["a"], "value": pair["distance"]})
     for pair in distances:
         if pair["distance"] < 0.65 and pair["distance"] > 0.6:
-            if len(edges[pair["a"]]) < 3:
+            if len(edges[pair["a"]]) < 4:
                 existing_edges = [e["target"] for e in edges[pair["a"]]]
                 if pair["b"] in existing_edges:
                     continue
@@ -45,7 +83,7 @@ def build_graph(distances):
 
     for pair in distances:
         if pair["distance"] > 0.65 and pair["distance"] < 0.7:
-            if len(edges[pair["a"]]) < 2:
+            if len(edges[pair["a"]]) < 3:
                 existing_edges = [e["target"] for e in edges[pair["a"]]]
                 if pair["b"] in existing_edges:
                     continue
@@ -58,7 +96,7 @@ def build_graph(distances):
 
     for pair in distances:
         if pair["distance"] > 0.7 and pair["distance"] < 0.75:
-            if len(edges[pair["a"]]) < 1:
+            if len(edges[pair["a"]]) < 2:
                 existing_edges = [e["target"] for e in edges[pair["a"]]]
                 if pair["b"] in existing_edges:
                     continue
@@ -83,6 +121,7 @@ def build_graph(distances):
 def build_and_save_graph(name):
 
     df = pd.read_csv(getFile(name, Datafile.DISTANCE_JS), sep="\t", index_col=0)
+    df.columns = df.columns.astype(int)
 
     # create array of distance pairs
     topics = list(df.columns)
@@ -94,14 +133,76 @@ def build_and_save_graph(name):
     with open(getFile(name, Datafile.TOPIC_ADJACENCY), "wt") as f:
         json.dump(data, f)
 
+    layout_graph(data, df, name)
 
-def layout_graph(data):
+
+def layout_graph(data, distances, name):
+    print("laying out graph")
     graph = nx.Graph()
-    graph.add_nodes_from([n["id"] for n in data["nodes"]])
+    graph.add_nodes_from([n for n in range(len(distances))])
     graph.add_weighted_edges_from(
-        [(n["value"], n["source"], n["target"]) for n in data["links"]]
+        [(n["source"], n["target"], n["value"]) for n in data["links"]]
     )
-    pos = nx.drawing.layout.spring_layout(graph)
+    components = sorted(nx.connected_components(graph), key=len, reverse=True)
+
+    # Each component is like a continent.
+    # this function attempts to lay out continents using a naive greedy algorithm
+    # we assume that there aren't that many continents that should be "near" each other.
+    layouts = []
+    centers = []
+    radii = []
+    compgraphs = []
+
+    for comp in components:
+        compgraph = graph.subgraph(comp).copy()
+        compgraphs.append(compgraph)
+        layout = nx.spring_layout(compgraph, scale=len(comp) ** 0.5)
+        layout_list = [
+            {
+                "id": key,
+                "x": layout[key][0],
+                "y": layout[key][1],
+            }
+            for key in layout
+        ]
+        layouts.append(layout_list)
+
+        radius = 0
+        for pos in layout_list:
+            radius = max(radius, (pos["x"] ** 2 + pos["x"] ** 2) ** 0.5)
+        radii.append(radius)
+        centers.append(None)
+
+    print("laying out second layer")
+    # Second layer force layout:
+    cg_distances = np.zeros((len(compgraphs), len(compgraphs)))
+    for i, cg1 in enumerate(compgraphs):
+        for j, cg2 in enumerate(compgraphs):
+            if j <= i:
+                continue
+            node_distances = []
+            for node1 in cg1:
+                for node2 in cg2:
+                    node_distances.append(distances[node1][node2])
+            cg_distances[i][j] = np.mean(node_distances)
+
+    sizes = [len(cg) for cg in compgraphs]
+    cg_edges = get_edges(cg_distances, sizes)
+
+    compgraph_nx = nx.Graph()
+    compgraph_nx.add_nodes_from([i for i in range(len(compgraphs))])
+    compgraph_nx.add_weighted_edges_from(cg_edges)
+    cg_layout = nx.spring_layout(compgraph_nx, scale=30)
+    for l in cg_layout:
+        centers[l] = cg_layout[l].tolist()
+
+    for i, layout in enumerate(layouts):
+        for pos in layout:
+            pos["x"] += centers[i][0] + 30
+            pos["y"] += centers[i][1] + 30
+
+    with open(getFile(name, Datafile.LAYOUT), "wt") as f:
+        f.write(json.dumps({"layouts": layouts, "centers": centers}))
 
 
 if __name__ == "__main__":
@@ -112,61 +213,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     name = args.name
-    build_graph_from_name(name)
-
-    """
-    dominant_topics = df.idxmax(axis=1)
-    # TODO more sophisticated?
-
-    # Build a graph where each vertex is a topic, and there is an edge between topics
-    # if there are headline that share both topics
-    # The edges are weighted by the strength of connection between them
-    # Each vertex is also weighted, so the (vertex_weight) of topic 0
-    # is the sum of the vertex_weights of all its neighbors, plus all topics that
-
-
-    # just build the adjacency matrix?
-    for t in topics:
-        adj[t] = np.sum(df[dominant_topics == t])
-
-    plt.imshow(adj, cmap="hot", interpolation="nearest")
-    # plt.show()
-    adj.to_csv("analysis.tsv", sep="\t")
-
-    def find_dominant_topic(thresh):
-        def finder(r):
-            values = np.sort(r)[::-1]
-            # max is first element, second element is second, etc.
-            if values[0] > values[1] * thresh:
-                return np.argmax(r)
-            return np.NAN
-
-        return finder
-
-    dts = df.apply(find_dominant_topic(2), axis=1)
-    print("With 2", dts.isna().sum() / len(dts))
-    dts = df.apply(find_dominant_topic(1.5), axis=1)
-    print("With 1.5", dts.isna().sum() / len(dts))
-    dts = df.apply(find_dominant_topic(1.2), axis=1)
-    print("With 1.2", dts.isna().sum() / len(dts))
-    dts = df.apply(find_dominant_topic(1.01), axis=1)
-    print("With 1.01", dts.isna().sum() / len(dts))
-
-    # write json
-    nodes = [{"id": t, "group": 1} for t in topics]
-    links = []
-    for t, row in adj.iterrows():
-        for t2 in range(len(row)):
-            if t == str(t2):
-                print("skip")
-                continue  # don't write the diagonals
-            links.append(
-                {
-                    "source": t,
-                    "target": str(t2),
-                    "value": row[t2] / row[int(t)],
-                }
-            )
-    with open("topic_adjacency.json", "wt") as f:
-        json.dump({"nodes": nodes, "links": links}, f)
-    """
+    build_and_save_graph(name)
