@@ -2,19 +2,24 @@ const SIZE = 1024
 let vertex_data, region_data, tsne, topics
 let topicSizes = topicMediaNames = []
 let mode = 0
-let month = 2
+let date = "2020-02-01"
+let end_date = ''
+let interval = 28
+const DAY_MS = 1000 * 60 * 60 * 24
 const TOPIC = 'us_mainstream_stories_trunc'
 
-function getName(month, suffix){
-    let monthStr = month
-    let monthStr2 = month + 1
-    if (month < 10) {
-        monthStr = '0' + month
-    }
-    if (monthStr2 < 10) {
-        monthStr2 = '0' + monthStr2
-    }
-    return `data/${TOPIC}_2020-${monthStr}-01_2020-${monthStr2}-01.${suffix}`
+function getName(date, interval, suffix){
+    let start = new Date(date)
+    start.setUTCHours(start.getUTCHours() + 4);
+    let end = new Date(start)
+    end.setDate(start.getDate() + interval)
+    let startStr = start.toISOString().slice(0, 10)
+    let endStr = end.toISOString().slice(0, 10)
+    end_date = endStr 
+    let str = `data/${TOPIC}_${startStr}_${endStr}.${suffix}`
+    console.log(str)
+    return str
+
 }
 
 function setup() {
@@ -25,7 +30,7 @@ function setup() {
 
 function drawMaster() {
 
-let topicName = getName(month, 'topics.json')
+let topicName = getName(date, interval, 'topics.json')
     d3.json(topicName).then((topicData) => {
         topics = topicData
         topicSizes = []
@@ -34,35 +39,42 @@ let topicName = getName(month, 'topics.json')
             topicMediaNames[k] = topics[k]["_metadata_"]["media_names"]
             delete topics[k]["_metadata_"]
         }
-        let min = 2;
-        let max = 6;
+        let min = '2020-02-01';
+        let max = '2020-02-22';
         let prevDisabled = ''
         let nextDisabled = ''
-        if (month == min) {
+        if (date == min) {
             prevDisabled = 'disabled'
         }
-        if (month == max) {
+        if (date == max) {
             nextDisabled = 'disabled'
         }
-        monthStr = ["January", "February", 'March', 'April', 'May']
         //document.getElementById('graphContainer').innerHTML = `<h2>News Landscape ${monthStr} 2020</h2>`
         document.getElementById('graphContainer').innerHTML = `<h2>2020 News Landscape </h2>`
         document.getElementById('graphContainer').innerHTML += 
-            `<button onclick="prevMonth()" ${prevDisabled}>< ${monthStr[month - 2]}</button> `
-        document.getElementById('graphContainer').innerHTML += `<span class="month">${monthStr[month - 1]}</span> `
+            `<button onclick="prevMonth()" ${prevDisabled}>prev</button> `
+        document.getElementById('graphContainer').innerHTML += `<span class="month">${date}-${end_date}</span> `
         document.getElementById('graphContainer').innerHTML += 
-            `<button onclick="nextMonth()" ${nextDisabled}>${monthStr[month]} ></button>`
+            `<button onclick="nextMonth()" ${nextDisabled}>next</button>`
         drawLayoutGraph()
         drawRegionsSVG()
     })
 }
 
 function nextMonth() {
-    month += 1
+    let d = new Date(date)
+    d.setUTCHours(d.getUTCHours() + 4);
+    let nextDate = new Date(d)
+    nextDate.setDate(d.getDate() + 7);
+    date = nextDate.toISOString().slice(0, 10)
     drawMaster()
 }
 function prevMonth() {
-    month -= 1
+    let d = new Date(date)
+    d.setUTCHours(d.getUTCHours() + 4);
+    let nextDate = new Date(d)
+    nextDate.setDate(d.getDate() - 7);
+    date = nextDate.toISOString().slice(0, 10)
     drawMaster()
 }
 
@@ -174,14 +186,14 @@ function drawRegionsSVG() {
         }
         return svg
     }
-    d3.tsv(getName(month, 'vertices.tsv')).then(vertexData => {
-        console.log(getName(month, 'regions.tsv'))
+    d3.tsv(getName(date, interval, 'vertices.tsv')).then(vertexData => {
+        console.log(getName(date, interval, 'regions.tsv'))
         vertexData = vertexData.map((d, i) => { return {
             id: i,
             x: parseFloat(d.x),
             y: parseFloat(d.y),
         }})
-        d3.tsv(getName(month, 'regions.tsv')).then(regionData => {
+        d3.tsv(getName(date, interval, 'regions.tsv')).then(regionData => {
             regionData = regionData.map((d, i) => { return {
                 id: i,
                 coordinates: JSON.parse(d.coordinates),
@@ -208,7 +220,7 @@ function draw() {
 let handleMouseOver = function(ev, d) {
     d3.select(this).transition()
         .duration(0.1)
-        .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.35)
+        .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.045)
     let sorted = Object.entries(topics[d.id]).filter(a => a[1] > 2).sort(function(a, b) {
         return b[1] - a[1];
     });
@@ -220,7 +232,8 @@ let handleMouseOver = function(ev, d) {
             medianodes += `<p class='sm'>${mname}: ${topicMediaNames[d.id][mname]}`
         }
     }
-    document.getElementById('wordContainer').innerHTML = '<h3>Commonly spoken words in this cluster</h3>'
+    document.getElementById('wordContainer').innerHTML = d.id
+    document.getElementById('wordContainer').innerHTML += '<h3>Commonly spoken words in this cluster</h3>'
     document.getElementById('wordContainer').innerHTML += nodes
     document.getElementById('wordContainer').innerHTML += '<h3>Breakdown of headlines in this cluster by media outlet'
     document.getElementById('wordContainer').innerHTML += medianodes
@@ -229,7 +242,7 @@ let handleMouseOver = function(ev, d) {
 let handleMouseOut = function(ev, d) {
  d3.select(this).transition()
         .duration(0.1)
-        .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.3)
+        .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.04)
 }
 
 function drawLDAVis() {
@@ -270,15 +283,7 @@ function drawLDAVis() {
         return svg.node()
     }
 
-    let monthStr = month
-    let monthStr2 = month + 1
-    if (month < 10) {
-        monthStr = '0' + month
-    }
-    if (monthStr2 < 10) {
-        monthStr2 = '0' + monthStr2
-    }
-    let tsvname = `distancesJS_${TOPIC}_2020-${monthStr}-01_2020-${monthStr2}-01.mds.tsv`
+    let tsvname = getName(date, interval, 'mds.tsv')
     d3.tsv(tsvname).then((data) => {
         distance_data = data.map(d => {
             return {
@@ -372,7 +377,7 @@ function drawForceGraph() {
     
         return svg.node();
     }
-    let jsonName = getName(month, 'topic_adjacency.json')
+    let jsonName = getName(date, interval, 'topic_adjacency.json')
     console.log(jsonName)
     d3.json(jsonName).then((data) => {
         document.getElementById('graphContainer').appendChild(graph(data))
@@ -395,27 +400,29 @@ function drawLayoutGraph() {
                 x: parseFloat(d.x),
                 y: parseFloat(d.y)
         }})).flat()
+        let xExt = d3.extent(nodes.map(n => n.x))
+        let yExt = d3.extent(nodes.map(n => n.y))
         console.log(nodes)
 
         const svg = d3.create("svg")
-            .attr("viewBox", [0, 0, width, height]);
+            .attr("viewBox", [xExt[0], yExt[0], xExt[1], yExt[1]]);
     
         const node = svg.append("g")
             .attr("stroke", "#fff")
-            .attr("stroke-width", 1.5)
+            .attr("stroke-width", 0.1)
         .selectAll("circle")
         .data(nodes)
         .join("circle")
-            .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.3)
-            .attr("cx", d=> d.x * 20)
-            .attr("cy", d=> d.y * 20)
+            .attr("r", d => Math.sqrt(topicSizes[int(d.id)]) * 0.04)
+            .attr("cx", d=> d.x )
+            .attr("cy", d=> d.y )
             .attr("fill", gcolor)
             .on('mouseover', handleMouseOver)
             .on('mouseout', handleMouseOut)
     
         return svg.node();
     }
-    let jsonName = getName(month, 'layout.json')
+    let jsonName = getName(date, interval, 'layout.json')
     console.log(jsonName)
     d3.json(jsonName).then((data) => {
         document.getElementById('graphContainer').appendChild(graph(data))

@@ -5,11 +5,13 @@
 #regionsSVGContainer {
   width: 1024px;
   height: 1024px;
+  display: inline-block;
 }
 
 #graphContainer {
   width: 768;
   height: 768;
+  display: inline-block;
 }
 
 svg {

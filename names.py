@@ -20,6 +20,7 @@ class Datafile(Enum):
     REGIONS_TSV = ".regions.tsv"
     POINTS_TSV = ".points.tsv"
     VERTICES_TSV = ".vertices.tsv"
+    INTERDISTANCE_JS = ".interdistance.tsv"
 
 
 def getFile(name: str, suffix: Datafile):
