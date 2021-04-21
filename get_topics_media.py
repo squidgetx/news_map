@@ -1,5 +1,4 @@
 # Python script to take an input corpus and output topics
-from datetime import datetime, timedelta
 import argparse
 import json
 import logging
@@ -17,7 +16,6 @@ from nltk.corpus import stopwords
 
 import pandas as pd
 import numpy as np
-import os
 
 from gsdmm import MovieGroupProcess
 from scipy.spatial.distance import jensenshannon
@@ -80,7 +78,6 @@ OTHER_STOPWORDS = [
     "boston_globe",
     "new",
     "update",
-    "could",
 ]
 
 CORES = 4
@@ -160,7 +157,7 @@ def get_dict_corpus(sentences):
     return dictionary_LDA, corpus
 
 
-def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, beta=0.1):
+def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name):
     # prepare files for consumption by rust executable:
     # vocabfile: one token per line
     print("preparing input for gsdmm-rust")
@@ -189,9 +186,9 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
             "-k",
             str(num_topics),
             "-a",
-            f"{alpha}",
+            "0.1",
             "-b",
-            f"{beta}",
+            "0.1",
             "-m",
             "50",
         ],
@@ -234,12 +231,10 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
                 break
             comps = line.split(",")
             scores.append({int(comps[0]): float(comps[1])})
-    return dictionary, topic_ndarray, scores
+    return topic_ndarray, scores
 
 
-def sentences_to_gsdmm(sentences, num_topics):
-    # return dictionary, topic ndarray, and scores for each document
-    dictionary, corpus = get_dict_corpus(sentences)
+def sentences_to_gsdmm(dictionary, corpus, num_topics):
     # corpus is the list of documents in token, BOW format.
     # a sequence of tuples where the first entry is the token ID,
     # and the second is the count of that token
@@ -261,7 +256,7 @@ def sentences_to_gsdmm(sentences, num_topics):
         for k, v in topic.items():
             topic_ndarray[i][k] = v
 
-    return dictionary, topic_ndarray, scores
+    return topic_ndarray, scores
 
 
 def sentences_to_topic_model(sentences, num_topics):
@@ -284,10 +279,6 @@ def sentences_to_topic_model(sentences, num_topics):
 
 
 def topic_ndarray_to_dict(dictionary, topic_ndarray):
-    """
-    given a topic distrubtion represented as a dictionary and ndarray,
-    return a dict of token => val mapping
-    """
     mapping = {v: k for k, v in dictionary.token2id.items()}
     topics = []
     for row in topic_ndarray:
@@ -299,33 +290,21 @@ def topic_ndarray_to_dict(dictionary, topic_ndarray):
     return topics
 
 
-def get_topic_distances_JS(topics, topics2):
-    """
-    input: ndarray for each topic
-    output: n_topic * n_topic ndarray of jensen shannon distances for each topic
-    n_topic is the larger of the two dimensions, so the returned array is symmetric
-        with zeros in places where there is no valid topic comparison
-    """
-    threshold = 50
-    dim = max(len(topics), len(topics2))
+def get_topic_distances_JS(topics):
+    # input: ndarray for each topic
+    # output: n_topic * n_topic ndarray of jensen shannon distances for each topic
 
-    distances = np.zeros((dim, dim))
+    distances = np.zeros((len(topics), len(topics)))
     for i in range(len(topics)):
-        thresh_i = np.sort(topics[i])[-threshold]
-        topic_i = topics[i].copy()
-        topic_i[topic_i < thresh_i] = 0
-        for j in range(len(topics2)):
-            thresh_j = np.sort(topics2[j])[-threshold]
-            topic_j = topics2[j].copy()
-            topic_j[topic_j < thresh_j] = 0
-            distances[i][j] = jensenshannon(topic_i, topic_j)
+        for j in range(i + 1, len(topics)):
+            distances[i][j] = jensenshannon(topics[i], topics[j])
+            distances[j][i] = distances[i][j]
 
     return np.nan_to_num(distances, nan=1.0)
 
 
 def get_topic_distances_WMD(model, dictionary, topics):
-    """
-    input: w2v model, ndarray for each topic, dictionary for id2token mapping
+    # input: w2v model, ndarray for each topic, dictionary for id2token mapping
     # TODO: even if we use WMD we need a fallback case for when
     # one of the words isn't included in the W2V
 
@@ -341,7 +320,6 @@ def get_topic_distances_WMD(model, dictionary, topics):
     # Trimming insignificant words shouldn't affect precision too significantly
     # given that we already know that topics should have a relatively
     # asymmetric token distribution
-    """
 
     threshold = 100
 
@@ -364,114 +342,13 @@ def get_topic_distances_WMD(model, dictionary, topics):
             distances[j][i] = distances[i][j]
     print(f"{time.time() - start}")
 
-    """
-    topic_dict = topic_ndarray_to_dict(dictionary, topics)
-    topic_sentences = []
-    for topic in topic_dict:
-        sentence = []
-        for word, freq in topic.items():
-            for _ in range(int(freq / 4)):
-                sentence.append(word)
-        topic_sentences.append(sentence)
-
-    distances = np.zeros((len(topics), len(topics)))
-    # N^2 / 2 now for topics, but N-topics should be low (<1K)
-    for i, sen1 in enumerate(topic_sentences):
-        for j in range(i + 1, len(topic_sentences)):
-            sen2 = topic_sentences[j]
-            distances[i][j] = wmdistance(model, sen1, sen2)
-            distances[j][i] = distances[i][j]
-    """
-
     return distances
-
-
-def get_topics(
-    df, dictionary, corpus, num_topics, name, method="GSDMM-Rust", alpha=0.1, beta=0.1
-):
-    assert len(df) == len(corpus)
-    if method == "LDA":
-        dictionary, topics, scores = sentences_to_topic_model(
-            sentences, args.num_topics
-        )
-    elif method == "GSDMM-Rust":
-        dictionary, topics, scores = sentences_to_gsdmm_rust(
-            dictionary, corpus, args.num_topics, name, alpha=alpha, beta=beta
-        )
-    elif method == "GSDMM":
-        dictionary, topics, scores = sentences_to_gsdmm(sentences, args.num_topics)
-
-    print("exporting dictionary and nparray")
-
-    # export everything
-    dictionary.save(getFile(name, Datafile.DICTIONARY))
-    np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
-
-    print("preparing scores")
-    media_names = df["media_name"].fillna("No Media Name")
-    scores_df = pd.DataFrame(scores).fillna(0)
-    scores_df.to_csv(getFile(name, Datafile.SCORES), sep="\t", index=False)
-    scores_df["dominant_topic"] = scores_df.idxmax(axis=1)
-    scores_df["title"] = df["title"]
-    scores_df["media_name"] = media_names
-    grouped = scores_df.groupby(["dominant_topic", "media_name"]).count()["title"]  #
-    scores_df[["dominant_topic", "title", "media_name"]].to_csv(
-        getFile(name, Datafile.HEADLINES_TSV), sep="\t", index=False
-    )
-    totals = scores_df.sum()
-
-    print("exporting topics.json")
-
-    # export the topic descriptions to topics.json
-    topics_dict = topic_ndarray_to_dict(dictionary, topics)
-    for k in range(len(topics_dict)):
-        topics_dict[k]["_metadata_"] = {"total": 0, "media_names": {}}
-        topics_dict[k]["_metadata_"]["total"] = totals.get(int(k), 0)
-        if int(k) in grouped:
-            topics_dict[k]["_metadata_"]["media_names"] = grouped.get(int(k)).to_dict()
-
-    with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
-        f.write(json.dumps(topics_dict))
-    assert len(scores_df) == len(corpus)
-
-    return topics
-
-
-def calculate_intertopic_distances(dictionary, topics, dictionary2, topics2):
-    """
-    calculate the jensen shannon distances between two given
-    topic distrubtions with different dictionaries
-
-    needs some careful munging, because the dictionaries that
-    the topic distribution is defined over is not the same.
-
-    returns: ndarray of intertopic distances
-    """
-
-    # create a merged dictionary and use this to re-map the topic2 ndarray
-    transformer = dictionary.merge_with(dictionary2)
-
-    transformed_topics_2 = np.zeros((len(topics2), len(dictionary)))
-    for i, row in enumerate(topics2):
-        doc = [(col, val) for col, val in enumerate(row)]
-        transformed_doc = transformer[doc]
-        for item in transformed_doc:
-            transformed_topics_2[i][item[0]] = item[1]
-
-    # copy the first ndarray over, leaving zeros in empty spaces
-    transformed_topics_1 = np.zeros((len(topics), len(dictionary)))
-    for i, row in enumerate(topics):
-        for j, val in enumerate(row):
-            transformed_topics_1[i][j] = val
-
-    ret = get_topic_distances_JS(transformed_topics_1, transformed_topics_2)
-    return ret
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train topic model on input text")
     parser.add_argument("-train", dest="train", help="filename for training")
-    parser.add_argument("-load", dest="load", help="name for loading")
+    parser.add_argument("-load", dest="load", help="name for loading pretrained topics")
     parser.add_argument(
         "-sample",
         dest="sample",
@@ -486,18 +363,9 @@ if __name__ == "__main__":
         help="start date (ISO)",
     )
     parser.add_argument(
-        "-interval",
-        dest="interval",
-        default=28,
-        type=int,
-        help="Number of days to include after the given start date",
-    )
-    parser.add_argument(
-        "-step",
-        type=int,
-        dest="step",
-        required=False,
-        help="Number of days forward to compare.",
+        "-end",
+        dest="end",
+        help="end date (ISO)",
     )
     parser.add_argument(
         "-num-topics",
@@ -506,22 +374,6 @@ if __name__ == "__main__":
         type=int,
         default=20,
         help="number of topics",
-    )
-    parser.add_argument(
-        "-alpha",
-        dest="alpha",
-        required=False,
-        type=float,
-        default=0.1,
-        help="gsdmm alpha",
-    )
-    parser.add_argument(
-        "-beta",
-        dest="beta",
-        required=False,
-        type=float,
-        default=0.1,
-        help="gsdmm beta",
     )
     parser.add_argument(
         "-method",
@@ -540,13 +392,11 @@ if __name__ == "__main__":
         help="whether or not to use WMD formatting",
     )
     args = parser.parse_args()
-    start_date = datetime.fromisoformat(args.start)
-    end_date = start_date + timedelta(days=args.interval)
     if args.train:
-        basename = args.train[0:-4]
-        name = basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
-
         logging.info(f"Opening training file {args.train}")
+        basename = args.train[0:-4]
+        if args.start:
+            name = basename + "_" + args.start + "_" + args.end
 
         df = pd.read_csv(args.train, sep="\t")
         print(f"Reading {len(df)} rows...")
@@ -554,63 +404,64 @@ if __name__ == "__main__":
         df[["title", "publish_date", "stories_id", "media_name"]].to_csv(
             f"{basename}_clean.tsv", sep="\t"
         )
-        df = df[
-            (df["publish_date"] > str(start_date.date()))
-            & (df["publish_date"] < str(end_date.date()))
-        ].reset_index()
+        if args.start and args.end:
+            df = df[(df["publish_date"] > args.start) & (df["publish_date"] < args.end)]
 
-        print(f"Training model...")
         dictionary, corpus = get_dict_corpus(df["title"])
 
-        # Trim corpus to remove empty documents
-        nonempty = [i for i, val in enumerate(corpus) if val != []]
-        corpus = [i for i in corpus if i != []]
-        df = df.iloc[nonempty]
+        media_topics = []
+        media_topics_ndarray = np.zeros((0, len(dictionary) + 1))
 
-        topics = get_topics(
-            df,
-            dictionary,
-            corpus,
-            args.num_topics,
-            name,
-            alpha=args.alpha,
-            beta=args.beta,
-        )
+        for media_name in df["media_name"].unique():
 
-        print(f"saving topics and dictionaries...")
-        dictionary.save(getFile(name, Datafile.DICTIONARY))
-        np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
+            # Build dictionary and corpus over entire dataset
 
-    elif args.load:
-        basename = args.load[0:-4]
-        name = basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
-        topics = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
-        dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))
+            # Build topic model on media outlet subset
+            filtered_corpus = []
+            mask = np.array(df["media_name"] == media_name)
+            # kinda gross, sorry
+            for i, c in enumerate(corpus):
+                if mask[i]:
+                    filtered_corpus.append(c)
 
-    name2 = None
-    if args.step:
-        print("calculating intertopic distances")
-        start_date_2 = start_date - timedelta(days=args.step)
-        end_date_2 = end_date - timedelta(days=args.step)
-        name2 = basename + "_" + str(start_date_2.date()) + "_" + str(end_date_2.date())
-        topic2_filename = getFile(name2, Datafile.TOPIC_NDARRAY)
-        topic2_dict = getFile(name2, Datafile.DICTIONARY)
-        if os.path.exists(topic2_filename) and os.path.exists(topic2_dict):
-            topics2 = np.load(topic2_filename, allow_pickle=True)
-            dictionary2 = corpora.Dictionary.load(topic2_dict)
-            interdistances = calculate_intertopic_distances(
-                dictionary, topics, dictionary2, topics2
+            logging.info(f"Training model...")
+            if args.method == "LDA":
+                dictionary, topics, scores = sentences_to_topic_model(
+                    sentences, args.num_topics
+                )
+            elif args.method == "GSDMM-Rust":
+                topics, scores = sentences_to_gsdmm_rust(
+                    dictionary, filtered_corpus, args.num_topics, name
+                )
+            elif args.method == "GSDMM":
+                topics, scores = sentences_to_gsdmm(
+                    dictionary, filtered_corpus, args.num_topics
+                )
+
+            print("exporting dictionary and nparray")
+
+            # export everything
+            dictionary.save(getFile(name, Datafile.DICTIONARY))
+            # np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
+
+            totals = pd.DataFrame(scores).fillna(0).sum()
+
+            # export the topic descriptions to topics.json
+            topics_dict = topic_ndarray_to_dict(dictionary, topics)
+            for k in range(len(topics_dict)):
+                topics_dict[k]["_metadata_"] = {"total": 0, "media_name": media_name}
+                topics_dict[k]["_metadata_"]["total"] = totals.get(int(k), 0)
+
+            media_topics.extend(topics_dict)
+            media_topics_ndarray = np.concatenate(
+                (media_topics_ndarray, topics), axis=0
             )
-            pd.DataFrame(interdistances).to_csv(
-                getFile(name, Datafile.INTERDISTANCE_JS), sep="\t"
-            )
-        else:
-            print(
-                f"Could not calculate intertopic distances! {topic2_filename} or {topic2_dict} not found"
-            )
+
+        with open(getFile(name, Datafile.MEDIA_TOPIC_JSON), "wt") as f:
+            f.write(json.dumps(media_topics))
 
     print("calculating JS distances")
-    distancesJS = get_topic_distances_JS(topics, topics)
+    distancesJS = get_topic_distances_JS(media_topics_ndarray)
     pd.DataFrame(distancesJS).to_csv(getFile(name, Datafile.DISTANCE_JS), sep="\t")
 
     if args.wmd:
@@ -621,10 +472,9 @@ if __name__ == "__main__":
             getFile(name, Datafile.DISTANCE_WMD), sep="\t"
         )
 
-    # print("calculating MDS")
-    # topic2mds.calculateMDS(name)
+    """
+    print("calculating MDS")
+    topic2mds.calculateMDS(name)
     print("building topic adjacency graph")
-    if name2:
-        analyze_topics.build_and_save_graph(name, prevname=name2)
-    else:
-        analyze_topics.build_and_save_graph(name)
+    analyze_topics.build_and_save_graph(name)
+    """

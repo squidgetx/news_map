@@ -1,0 +1,28 @@
+{
+  "name": "thesis",
+  "version": "1.0.0",
+  "description": "",
+  "main": "layout.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/squidgetx/news_map.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/squidgetx/news_map/issues"
+  },
+  "homepage": "https://github.com/squidgetx/news_map#readme",
+  "dependencies": {
+    "d3": "^6.7.0",
+    "d3-node": "^2.2.2",
+    "fs": "0.0.1-security",
+    "jsdom": "^16.5.3"
+  }
+}
