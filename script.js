@@ -377,13 +377,15 @@ function drawLayoutGraph() {
 
     const svg = d3
       .create("svg")
+      /*
       .attr("viewBox", [
         xExt[0] - maxRadius,
         yExt[0] - maxRadius,
         xExt[1] - xExt[0] + maxRadius * 2,
         yExt[1] - yExt[0] + maxRadius * 2,
       ]);
-    // .attr("viewBox", [-30, -30, 130, 130])
+      */
+      .attr("viewBox", [2400, 2400, 6000, 6000]);
 
     const node = svg
       .append("g")

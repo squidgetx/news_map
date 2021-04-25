@@ -57,32 +57,21 @@ let layout = function (
   for (const n of nodes) {
     nodeLookup[n.id] = n;
   }
-  let degreeLookup = {};
   for (const li in links) {
     let l = links[li];
     let r1 = getRadius(nodeLookup[l.source]);
     let r2 = getRadius(nodeLookup[l.target]);
-    if (l.source in degreeLookup) {
-      degreeLookup[l.source] += 1;
-    } else {
-      degreeLookup[l.source] = 1;
-    }
-    if (l.target in degreeLookup) {
-      degreeLookup[l.target] += 1;
-    } else {
-      degreeLookup[l.target] = 1;
-    }
 
-    let weight = l.weight;
     // figure out optimal distance:
     // if weight is closer to 1, distance should be r1+r2
     // if weight closer to 0, distance should be... further?
-    l.distance = (weight * (r1 + r2)) / 2;
+    l.distance = (l.weight * (r1 + r2)) / 2;
   }
   let linkForce = d3
     .forceLink(links)
     .id((d) => d.id)
     .distance((d) => d.distance);
+
   if (name == "mmc") {
     linkForce = linkForce.strength(2.1);
   }
@@ -117,6 +106,7 @@ let layout = function (
     .join("text")
     .attr("class", "linklabel")
     .html((d) => d.distance.toFixed(2));
+  debugger;
   function ticked() {}
 
   // Here is the key. Without calling force.tick(), the simulation will not start and the nodes and links
@@ -180,6 +170,7 @@ let metametaclusters = JSON.parse(
 let layouts = [];
 let metacluster_sizes = {};
 console.log(metaclusters.length);
+debugger;
 for (let metacluster of metaclusters) {
   let nodes = layout(
     metacluster["nodes"],
@@ -224,11 +215,11 @@ for (let i = 0; i < mmc_layout.length; i++) {
   let nodes = layouts[i];
   let center = mmc_layout[i];
 
-  if (args.length === 3) {
+  centers.push(center);
+  if (false) {
     center.x = x;
     center.y = y;
   }
-  centers.push(center);
   const mmc_scale = 1;
   for (node of nodes) {
     node.x += center.x * mmc_scale;
@@ -244,6 +235,7 @@ for (let i = 0; i < mmc_layout.length; i++) {
     maxy = 0;
   }
 }
+debugger;
 
 fs.writeFile(
   `data/${name}.layout.json`,

@@ -23,7 +23,7 @@ from gsdmm import MovieGroupProcess
 from scipy.spatial.distance import jensenshannon
 
 import topic2mds
-import analyze_topics
+import cluster_topics
 import subprocess
 from names import Datafile, getFile
 from wmdistance import WMDistance
@@ -625,6 +625,6 @@ if __name__ == "__main__":
     # topic2mds.calculateMDS(name)
     print("building topic adjacency graph")
     if name2:
-        analyze_topics.build_and_save_graph(name, prevname=name2)
+        cluster_topics.build_and_save_graph(name, prevname=name2)
     else:
-        analyze_topics.build_and_save_graph(name)
+        cluster_topics.build_and_save_graph(name)

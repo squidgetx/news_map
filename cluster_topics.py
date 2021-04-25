@@ -267,7 +267,11 @@ def export_components(components, name="metaclusters.json"):
 
 
 def export_graph(graph, name="metametaclusters.json"):
-    nodes = [{"id": t[0]} for t in graph.nodes.data()]
+    nodes = []
+    for i, t in enumerate(graph.nodes.data()):
+        node = {"id": t[0]}
+        node.update(t[1])
+        nodes.append(node)
     links = []
     for i, t in enumerate(graph.edges.data()):
         link = {"source": t[0], "target": t[1]}
@@ -363,6 +367,7 @@ def layout_graph(
             node = initPositions[i]
             graph.nodes[i]["x"] = node["position"][0] - node["center"]["x"]
             graph.nodes[i]["y"] = node["position"][1] - node["center"]["y"]
+
     graph.add_weighted_edges_from(
         [(n["source"], n["target"], n["value"]) for n in data["links"]]
     )
@@ -371,8 +376,7 @@ def layout_graph(
     compgraphs, edges = cut_components(compgraphs, n=10)
 
     # min cuts
-    export_components(compgraphs, getFile(name, Datafile.METACLUSTERS))
-    print("components exported")
+
     print("forming metametaclusters")
     # Second layer force layout:
     # Use the edges that were trimmed from the min-cut process
@@ -405,6 +409,8 @@ def layout_graph(
             mmc_graph.nodes[i]["x"] = center[0]
             mmc_graph.nodes[i]["y"] = center[1]
 
+    export_components(compgraphs, getFile(name, Datafile.METACLUSTERS))
+    print("components exported")
     export_graph(mmc_graph, getFile(name, Datafile.METAMETACLUSTERS))
     print("metametaclusters exported")
     return
