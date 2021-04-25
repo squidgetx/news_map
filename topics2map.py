@@ -1,9 +1,10 @@
 # Python script to take a tsv of coordinates as input and output map
 # Heavily inspired by https://github.com/mewo2/deserts
 
+import pdb
+
 import numpy as np
 import json
-import pdb
 import logging
 import argparse
 import pandas as pd
@@ -25,6 +26,97 @@ class PolygonMap:
 
     headlines = []
 
+    def create_initial_polygons(self, layout_df, n=2048):
+        # layout is a dict of x, y positions for each topic
+
+        pts = np.random.random((n, 2))
+        tree = KDTree(pts)
+        pts_to_remove = tree.query_ball_point(layout_df[["x", "y"]], layout_df["size"])
+        ptset = set()
+        for p in pts_to_remove:
+            ptset.update(p)
+        pts = np.delete(pts, list(ptset), axis=0)
+        pt_df = pd.DataFrame(pts, columns=["x", "y"])
+
+        all_pts = pd.concat((topic_df, pt_df))[["x", "y"]]
+        voronoi = spatial.Voronoi(all_pts)
+
+        self.n_topics = len(topic_df)
+        self.topic_df = topic_df
+        self.rough_voronoi = voronoi
+        self.rough_kdtree = KDTree(all_pts)
+        self.rough_vertices = voronoi.vertices
+        self.topic_kdtree = KDTree(topic_df[["x", "y"]])
+
+        """
+        df = pd.DataFrame(voronoi.vertices, columns=["x", "y"])
+        # df.to_csv(getFile(self.name, Datafile.VERTICES_TSV), sep="\t")
+
+        df = pd.DataFrame()
+        # df["coordinates"] = self.vor.regions
+        df["coordinates"] = [json.dumps(row) for row in voronoi.regions]
+        topics = np.zeros(len(voronoi.regions))
+        for i, j in enumerate(voronoi.point_region):
+            if i < len(topic_df):
+                topics[j] = i
+            else:
+                topics[j] = -1
+        df["topic"] = topics
+
+        elevation = []
+        for i in topics:
+            if i == -1:
+                elevation.append(0)
+            else:
+                elevation.append(topic_df["size"][i])
+        # df["elevation"] = np.array(elevation) / np.max(elevation)
+        # df.to_csv(getFile(self.name, Datafile.REGIONS_TSV), sep="\t")
+        """
+
+    def initial_elevation(self):
+        # Assign topics to each hi-resolution polygon
+        for i, simplex in enumerate(self.delaunay.simplices):
+            pts = self.delaunay.points[simplex]
+            pt = np.mean(pts, axis=0)
+            _, macroregion = self.rough_kdtree.query(pt)
+            if macroregion >= self.n_topics:
+                # water
+                self.elevation[i] = 0
+            else:
+                self.elevation[i] = self.topic_df["size"][macroregion]
+
+            try:
+                _, topic = self.topic_kdtree.query(pt)
+                self.moisture[i] = self.topic_df["subjectivity"][topic]
+                self.temperature[i] = self.topic_df["media_diversity"][topic]
+            except:
+                pdb.set_trace()
+
+    def smooth_coastline(self):
+        # For nodes that have elevation == 0 and both neighbors elevation > 0, pull up
+        # For nodes that have elevation > 0 and both neighbors elevation == 0, push down
+        for i, neighbors in enumerate(self.delaunay.neighbors):
+            nonedge_neighbors = [n for n in neighbors if n != -1]
+            neighbor_elevation = self.elevation[nonedge_neighbors]
+            threshold = len(nonedge_neighbors) / 2
+            if self.elevation[i] < 0:
+                if np.sum(neighbor_elevation > 0) > threshold:
+                    self.elevation[i] = np.mean(neighbor_elevation)
+            else:
+                if np.sum(neighbor_elevation < 0) > threshold:
+                    self.elevation[i] = np.mean(neighbor_elevation)
+
+    def assign_topics(self):
+        # Assign topics to each hi-resolution polygon
+        for i, simplex in enumerate(self.delaunay.simplices):
+            if self.elevation[i] > 0:
+                pts = self.delaunay.points[simplex]
+                pt = np.mean(pts, axis=0)
+                dist, macroregion = self.topic_kdtree.query(pt)
+                self.topics[i] = self.topic_df["dominant_topic"][macroregion]
+            else:
+                self.topics[i] = -1
+
     def __init__(self, n=30, name=""):
         """
         Initialize the PolygonMap class, with n points
@@ -34,19 +126,19 @@ class PolygonMap:
         # init healines to empty array of arrays
 
         # fill with n random 2D vectors
-        self.pts = np.random.random((n, 2))
         self.name = name
+        self.pts = np.random.random((n, 2))
 
         # use lloyd relaxation to space them better
-        self.pts = PolygonMap.improve_points(self.pts)
         self.vor = spatial.Voronoi(self.pts)
         self.n_regions = len(self.vor.regions)
+        self.pts = PolygonMap.improve_points(self.pts)
         # ok, so each voronoi vertex defines triangle, with the 3 points of the triangle =
         # the voronoi centers of the neighboring polygons
         self.delaunay = spatial.Delaunay(self.pts)
         self.n_triangles = len(self.delaunay.simplices)
         self.headlines = [[] for i in range(self.n_triangles)]
-        self.topics = [[] for i in range(self.n_triangles)]
+        self.topics = np.zeros(self.n_triangles)
         # use KD tree to provide nearest neighbor lookups for occasional grid based operation
         self.tree = KDTree(self.pts)
 
@@ -70,6 +162,8 @@ class PolygonMap:
 
         # make a list of each region's elevation. initialize to zero
         self.elevation = np.zeros(self.n_triangles)
+        self.moisture = np.zeros(self.n_triangles)
+        self.temperature = np.zeros(self.n_triangles)
 
     @staticmethod
     def improve_points(pts, n=3):
@@ -114,13 +208,73 @@ class PolygonMap:
 
         self.elevation[tri_i] += 1
         self.headlines[tri_i].append(headline)
-        self.topics[tri_i].append(dominant_topic)
+
+    def erode(self):
+        # First get the planchon darboux:
+        pd_heightmap = self.elevation.copy()
+        # Fill everything that isn't an edge to infinity
+        # self.pd_heightmap[self.edges == False] = np.inf
+        pd_heightmap[self.edges != True] = np.inf
+        epsilon = 0.00001
+        print("calculate hillmap")
+        while True:
+            visited = np.zeros(len(pd_heightmap), dtype=bool)
+            for i, height in enumerate(pd_heightmap):
+                # If this cell has a neighbor lower than it, set this cell's
+                # height to the max of its original height or the neighbor's height + epsilon
+
+                # immediately continue if this is already at "normal" height
+                if height == self.elevation[i]:
+                    continue
+
+                nonedge_neighbors = [n for n in self.delaunay.neighbors[i] if n != -1]
+                lower_neighbor_heights = [
+                    h for h in pd_heightmap[nonedge_neighbors] if h < pd_heightmap[i]
+                ]
+                # No lower neighbors
+                if not lower_neighbor_heights:
+                    continue
+                new_val = np.max(
+                    [np.max(lower_neighbor_heights) + epsilon, self.elevation[i]]
+                )
+                if pd_heightmap[i] != new_val:
+                    pd_heightmap[i] = new_val
+                    visited[i] = True
+            if np.sum(visited) == 0:
+                break
+
+        print("calculate water flux")
+        # Next, get the water flux map
+        # Create a sorted list of nodes by height, keep track of the indexes
+        pd_heightmap_sorted = [(i, val) for i, val in enumerate(pd_heightmap)]
+        pd_heightmap_sorted.sort(key=lambda x: x[1], reverse=True)
+        flux_map = np.array([1 for _ in range(len(pd_heightmap))])
+        for node in pd_heightmap_sorted:
+            nonedge_neighbors = [n for n in self.delaunay.neighbors[node[0]] if n != -1]
+            neighbor_heights = pd_heightmap[nonedge_neighbors]
+            lowest_neighbor = nonedge_neighbors[np.argmin(neighbor_heights)]
+            # Give the lowest neighbor this node's rainfall
+            flux_map[lowest_neighbor] += flux_map[node[0]]
+
+        print("e r o d e")
+        for i, flux in enumerate(flux_map):
+            nonedge_neighbors = [n for n in self.delaunay.neighbors[node[0]] if n != -1]
+            neighbor_slopes = np.abs(
+                pd_heightmap[nonedge_neighbors] - self.elevation[i]
+            )
+            slope = np.mean(neighbor_slopes)
+            delta = np.min([flux ** 0.5 * slope / 100, 0.1])
+            self.elevation[i] -= delta
+        self.normalize()
+
+        self.flux_map = flux_map
 
     def normalize(self):
         """
         Normalize the heightmap to 0-1
         """
-        self.elevation /= np.linalg.norm(self.elevation)
+        self.elevation -= np.min(self.elevation)
+        self.elevation /= np.max(self.elevation)
 
     def round_hills(self):
         """
@@ -138,23 +292,52 @@ class PolygonMap:
         """
         for i in range(n):
             new_elevations = self.elevation.copy()
-            new_topics = self.topics.copy()
+            new_moistures = self.moisture.copy()
+            new_temp = self.temperature.copy()
             for i, neighbors in enumerate(self.delaunay.neighbors):
                 neighbors = neighbors[neighbors != -1]
                 new_elevations[i] = np.mean(
                     np.append(self.elevation[neighbors], self.elevation[i])
                 )
-                if self.topics[i] == []:
-                    for n in neighbors:
-                        self.topics[i].extend(self.topics[n])
+                new_moistures[i] = np.mean(
+                    np.append(self.moisture[neighbors], self.moisture[i])
+                )
+                new_temp[i] = np.mean(
+                    np.append(self.temperature[neighbors], self.temperature[i])
+                )
 
             self.elevation = new_elevations
+            self.moisture = new_moistures
+            self.temperature = new_temp
 
     def reset_sea_level(self, quantile=0.25):
         """
         Trim all of the bottom N landmass
         """
-        self.elevation[self.elevation < np.quantile(self.elevation, quantile)] = 0
+        self.elevation -= np.quantile(self.elevation, quantile)
+
+    def calculate_shadows(self):
+        sun = np.array([0, 0, 20])
+        print("calculating shadows")
+        self.shadow = np.zeros(self.n_triangles)
+        for i, simplex in enumerate(self.delaunay.simplices):
+            pts = self.delaunay.points[simplex]
+            pt = np.mean(pts, axis=0)
+            pt = np.array([pt[0], pt[1], self.elevation[i]])
+            if i % 100 == 0:
+                print(i, self.n_triangles, end="\r")
+            delta = pt - sun
+            orig = sun + 1 / delta[2] * delta
+            LEN = 100
+            j = 0
+            while j < LEN:
+                ray = orig + (pt - orig) * j / LEN
+                tri_i = self.delaunay.find_simplex((ray[0], ray[1]))
+                if ray[2] < self.elevation[tri_i]:
+                    self.shadow[i] = 1
+                    self.shadow[tri_i] = -1
+                    break
+                j += 1
 
     def export(self):
         """
@@ -177,8 +360,11 @@ class PolygonMap:
         df["headlines"] = self.headlines
         df["is_edge"] = self.edges
         # ugly but i hate np
-        df["topics"] = [stats.mode(a).mode for a in self.topics]
-        df["topics"] = [a[0] if a.size > 0 else [-1] for a in df["topics"]]
+        df["topics"] = self.topics
+        df["flux"] = self.flux_map
+        df["moisture"] = self.moisture
+        df["temperature"] = self.temperature
+        df["shadow"] = self.shadow
 
         df.to_csv(getFile(self.name, Datafile.REGIONS_TSV), sep="\t")
 
@@ -197,59 +383,49 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     m = PolygonMap(args.n, args.name)
+    """
     scores = np.genfromtxt(
         getFile(args.name, Datafile.RUST_PROBABILITIES), delimiter=","
     )
     headlines = pd.read_csv(getFile(args.name, Datafile.HEADLINES_TSV), sep="\t")
-    sizes = names.getTopicSizes(args.name)
+    """
+
+    topic_df = pd.read_csv(
+        getFile(args.name, Datafile.TOPIC_METADATA_TSV), sep="\t", index_col=0
+    )
+
     with open(getFile(args.name, Datafile.LAYOUT), "rt") as f:
         layout = json.load(f)["layouts"]
         layout = sorted([item for sl in layout for item in sl], key=lambda x: x["id"])
         layout_df = pd.DataFrame(layout)
+    topic_df["x"] = layout_df["x"]
+    topic_df["y"] = layout_df["y"]
+    topic_df["size"] **= 0.5
+    topic_df = topic_df.reset_index()
 
     # scale the x and y appropriately. Must be scaled together, not separately!
-    xmin = np.min(layout_df["x"])
-    xmax = np.max(layout_df["x"])
+    xmin = np.min(topic_df["x"])
+    xmax = np.max(topic_df["x"])
 
-    ymin = np.min(layout_df["y"])
-    ymax = np.max(layout_df["y"])
+    ymin = np.min(topic_df["y"])
+    ymax = np.max(topic_df["y"])
 
     largest = max(xmax - xmin, ymax - ymin)
-    layout_df["x"] -= xmin
-    layout_df["y"] -= ymin
-    layout_df["x"] /= largest
-    layout_df["y"] /= largest
+    topic_df["x"] -= xmin
+    topic_df["y"] -= ymin
+    topic_df["x"] /= largest
+    topic_df["y"] /= largest
+    topic_df["size"] /= largest
 
-    for index, row in enumerate(scores):
-        topic = int(np.argmax(row))
-        x = layout_df.iloc[topic]["x"]
-        y = layout_df.iloc[topic]["y"]
-        # dx = (layout_df["x"] - x) * row
-        # dy = (layout_df["y"] - y) * row
-        # x += dx.sum()
-        # y += dy.sum()
-        """
-        for i, val in enumerate(row):
-            if val < 0.01:
-                continue
-            if i == topic:
-                continue
-            # for each topic, adjust this headline toward based on the strength of its probability
-            # most of the time, there shouldn't actually be much shifting I think
-            x1 = layout_df.iloc[i]["x"]
-            y1 = layout_df.iloc[i]["y"]
-            x += (x1 - x0) * val
-            y += (y1 - y0) * val
-        """
-        if index % 1000 == 0:
-            print(index, len(scores), end="\r")
-
-        factor = (sizes[topic] ** 0.5) / 2000
-        x += np.random.normal(0, (1 - row.max()) * factor)
-        y += np.random.normal(0, (1 - row.max()) * factor)
-        m.add_headline(headlines["title"][index], topic, x, y)
+    m.create_initial_polygons(topic_df)
+    m.initial_elevation()
     m.normalize()
     m.round_hills()
-    m.smooth()
-    m.reset_sea_level(quantile=0.5)
+    m.smooth(n=3)
+    m.erode()
+    m.reset_sea_level(quantile=0.8)
+    m.smooth_coastline()
+    m.smooth_coastline()
+    m.assign_topics()
+    m.calculate_shadows()
     m.export()

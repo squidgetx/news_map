@@ -9,4 +9,4 @@ gensim
 pandas
 np
 pyemd
-fitsne
+textblob

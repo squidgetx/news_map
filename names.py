@@ -24,6 +24,9 @@ class Datafile(Enum):
     VERTICES_TSV = ".vertices.tsv"
     INTERDISTANCE_JS = ".interdistance.tsv"
     HEADLINES_TSV = ".headlines.tsv"
+    TOPIC_METADATA_TSV = ".topics.metadata.tsv"
+    METACLUSTERS = ".metaclusters.json"
+    METAMETACLUSTERS = ".metametaclusters.json"
 
 
 def getFile(name: str, suffix: Datafile):

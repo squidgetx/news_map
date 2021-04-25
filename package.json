@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/squidgetx/news_map#readme",
   "dependencies": {
+    "argparse": "^2.0.1",
     "d3": "^6.7.0",
     "d3-node": "^2.2.2",
     "fs": "0.0.1-security",

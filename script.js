@@ -60,7 +60,7 @@ function drawMaster() {
       "graphContainer"
     ).innerHTML += `<button onclick="nextMonth()" ${nextDisabled}>next</button>`;
     drawLayoutGraph();
-    drawRegionsSVG();
+    //drawRegionsSVG();
   });
 }
 
@@ -111,49 +111,86 @@ function reset() {
   document.getElementById("regionsSVGContainer").hidden = true;
 }
 
-function mouseClicked() {
-  /*
-    mode  = (mode + 1) % 3
-    reset();
-    if (mode == 0) {
-        drawRegionsSVG()
-    } else if (mode == 1) {
-        drawTSNE()
-    } else if (mode == 2) {
-        drawForceGraph()
-    }
-    */
+function mouseClicked() {}
+
+const terrainGrid = [
+  ["tundra", "taiga", "desert"], // dry
+  ["taiga", "pasture", "savannah"], // medium
+  ["snow", "forest", "rainforest"], // wet
+];
+
+function getTerrain(r) {
+  let t = r.temperature;
+  let m = r.moisture;
+  let mIndex = Math.floor(m * 3);
+  let tIndex = Math.floor(t * 3);
+
+  return terrainGrid[mIndex][tIndex];
 }
 
-function drawRegions() {
-  document.getElementById("defaultCanvas0").hidden = false;
-  background("white");
-  for (r of region_data) {
-    noStroke();
-    fill(230, 250, 255);
-    if (r.elevation > 0) {
-      fill(200 - r.elevation * 2);
-    }
-    beginShape();
-    for (c of r.coordinates) {
-      if (c != -1) {
-        vertex(vertex_data[c].x * 1024, vertex_data[c].y * 1024);
-      }
-    }
-    endShape(CLOSE);
-  }
+function getTerrainColorInterpolate(r) {
+  let colors = [
+    d3.interpolateRgb(getTerrainColor("desert"), getTerrainColor("savannah")),
+    d3.interpolateRgb(getTerrainColor("savannah"), getTerrainColor("pasture")),
+    d3.interpolateRgb(getTerrainColor("pasture"), getTerrainColor("rock")),
+    d3.interpolateRgb(getTerrainColor("rock"), getTerrainColor("snow")),
+  ];
+  let len = colors.length;
+  let color = colors[Math.floor(r.elevation * len)](
+    r.elevation * len - Math.floor(r.elevation * len)
+  );
+  return color;
+  /*
+  let t = r.temperature;
+  //* 0.2 + (1 - r.elevation) * 0.8;
+  let m = r.moisture;
+  let mIndex = Math.floor(m * 2);
+  let mFrac = m * 2 - mIndex;
+  let tIndex = Math.floor(t * 2);
+  let tFrac = t * 2 - tIndex;
+  let c0 = getTerrainColor(terrainGrid[mIndex][tIndex]);
+  let c1 = getTerrainColor(terrainGrid[mIndex][tIndex + 1]);
+  let c2 = getTerrainColor(terrainGrid[mIndex + 1][tIndex]);
+  let c3 = getTerrainColor(terrainGrid[mIndex + 1][tIndex + 1]);
+  let c01 = d3.interpolateRgb(c0, c1)(tFrac);
+  let c23 = d3.interpolateRgb(c2, c3)(tFrac);
+  return d3.interpolateRgb(c01, c23)(mFrac);
+  */
+}
+
+function getTerrainColor(t) {
+  const TerrainColor = {
+    tundra: "#fdfff0",
+    rock: "#d4c9bc",
+    desert: "#fff1cf",
+    taiga: "#e1edd8",
+    pasture: "#a3d4aa",
+    savannah: "#dae39f",
+    snow: "#ffffff",
+    forest: "#216b2c",
+    rainforest: "#319e41",
+    darksnow: "#f0e4d5",
+  };
+  return TerrainColor[t];
+
+  /*
+        let c1 = colorGrid[mIndex][tIndex + 1];
+        //let c2 = colorGrid[mIndex + 1][tIndex];
+        //let c3 = colorGrid[mIndex + 1][tIndex + 1];
+        let c01 = d3.interpolateRgb(c0, c1)(tFrac);
+        let c23 = d3.interpolateRgb(c2, c3)(tFrac);
+        color = d3.interpolateRgb(c01, c23)(mFrac);
+        */
 }
 
 function drawRegionsSVG() {
   document.getElementById("regionsSVGContainer").hidden = false;
   let renderRegionsSVG = function (region_data, vertex_data) {
-    let polygons = [];
-    let rdata = [];
     let find_region = function (topic) {
       // return the set of polygons that have this topic and are contiguous
       // don't bother with flood fill, just select region based on topic membership
       return region_data
-        .filter((r) => r.dominant_topic == topic)
+        .filter((r) => r.topic == topic)
         .filter((r) => r.elevation > 0)
         .filter((r) => r.poly != null);
     };
@@ -167,11 +204,19 @@ function drawRegionsSVG() {
         r.poly = null;
         continue;
       }
-      let color = "rgb(210, 230, 245)";
+      //let color = "rgb(210, 230, 245)";
+      let color = "#b5c8f5";
       let shade = Math.floor(map(r.elevation, 0, 1, 255, 0));
       r.shade = shade;
       if (r.elevation > 0) {
-        color = `rgb(${r.shade}, ${r.shade * 1.2}, ${r.shade * 0.9})`;
+        //color = getTerrainColor(getTerrain(r));
+        color = getTerrainColorInterpolate(r);
+      }
+      if (r.shadow == 1) {
+        color = d3.color(color).darker(0.5);
+      }
+      if (r.shadow == -1) {
+        //color = d3.color(color).brighter(0.5);
       }
       let poly = document.createElementNS("http://www.w3.org/2000/svg", "path");
       let points = "M";
@@ -184,20 +229,26 @@ function drawRegionsSVG() {
       poly.setAttribute("d", points);
       poly.setAttribute("style", `fill: ${color}`);
       poly.addEventListener("mouseenter", (ev) => {
-        let polys = find_region(r.dominant_topic);
+        let polys = find_region(r.topic);
         for (let re of polys) {
           let p = re.poly;
-          let color = `rgb(${re.shade * 1.1}, ${re.shade * 0.9}, ${
-            re.shade * 0.9
-          })`;
-          p.setAttribute("style", `fill: ${color}`);
+          //let color = getTerrainColor(getTerrain(re));
+          let color = getTerrainColorInterpolate(re);
+          if (re.shadow == 1) {
+            color = d3.color(color).darker(0.5);
+          }
+          color = d3.color(color).darker();
+          p.setAttribute("style", `fill: ${color};`);
         }
-        drawCard(r.dominant_topic);
+        drawCard(r.topic, r);
       });
       poly.addEventListener("mouseleave", () => {
-        let polys = find_region(r.dominant_topic);
+        let polys = find_region(r.topic);
         for (let re of polys) {
-          let color = `rgb(${re.shade}, ${re.shade * 1.2}, ${re.shade * 0.9})`;
+          let color = getTerrainColorInterpolate(re);
+          if (re.shadow == 1) {
+            color = d3.color(color).darker(0.5);
+          }
           re.poly.setAttribute("style", `fill: ${color}`);
         }
       });
@@ -221,9 +272,17 @@ function drawRegionsSVG() {
           id: i,
           coordinates: JSON.parse(d.coordinates),
           elevation: parseFloat(d.elevation),
-          headlines: d.headlines,
-          is_edge: d.is_edge === "True",
-          dominant_topic: parseInt(d.topics),
+          flux: parseFloat(d.flux),
+          moisture: constrain(
+            parseFloat(d.moisture) * 3 * 0.4 + parseFloat(d.elevation) * 0.6,
+            0,
+            0.99
+          ),
+          temperature:
+            parseFloat(d.temperature) * 0.2 +
+            (1 - parseFloat(d.elevation)) * 0.8,
+          topic: parseInt(d.topics),
+          shadow: parseInt(d.shadow),
         };
       });
       console.log(vertexData);
@@ -240,10 +299,10 @@ function draw() {}
 
 let handleMouseOver = function (ev, d) {
   d3.select(this).transition().duration(0.1).attr("r", getSize(1.1));
-  drawCard(d.id);
+  drawCard(d.id, d);
 };
 
-let drawCard = function (topic_id) {
+let drawCard = function (topic_id, r) {
   let sorted = Object.entries(topics[topic_id])
     .filter((a) => a[1] > 2)
     .sort(function (a, b) {
@@ -259,6 +318,16 @@ let drawCard = function (topic_id) {
     .slice(0, 20)
     .join("");
   document.getElementById("wordContainer").innerHTML = `<p>${topic_id}</p>`;
+  document.getElementById(
+    "wordContainer"
+  ).innerHTML += `<p>Temperature/Mean Subjectivity: ${r.temperature}</p>`;
+  document.getElementById(
+    "wordContainer"
+  ).innerHTML += `<p>Elevation: ${r.elevation}</p>`;
+
+  document.getElementById(
+    "wordContainer"
+  ).innerHTML += `<p>Moisture/Media Diversity: ${r.moisture}</p><p>Terrain: </p>`;
   let medianodes = "";
   for (mname in topicMediaNames[topic_id]) {
     if (topicMediaNames[topic_id][mname] > 2) {
@@ -278,7 +347,7 @@ let handleMouseOut = function (ev, d) {
 };
 
 let getSize = function (mult) {
-  return (d) => Math.sqrt(topicSizes[d.id]) * mult;
+  return (d) => Math.sqrt(topicSizes[d.id]) * 2 * mult;
 };
 
 function drawLayoutGraph() {
@@ -318,8 +387,6 @@ function drawLayoutGraph() {
 
     const node = svg
       .append("g")
-      .attr("stroke", "#fff")
-      .attr("stroke-width", 0.1)
       .selectAll("circle")
       .data(nodes)
       .join("circle")
@@ -489,5 +556,24 @@ function drawForceGraph() {
   d3.json(jsonName).then((data) => {
     document.getElementById("graphContainer").appendChild(graph(data));
   });
+}
+
+function drawRegions() {
+  document.getElementById("defaultCanvas0").hidden = false;
+  background("white");
+  for (r of region_data) {
+    noStroke();
+    fill(230, 250, 255);
+    if (r.elevation > 0) {
+      fill(200 - r.elevation * 2);
+    }
+    beginShape();
+    for (c of r.coordinates) {
+      if (c != -1) {
+        vertex(vertex_data[c].x * 1024, vertex_data[c].y * 1024);
+      }
+    }
+    endShape(CLOSE);
+  }
 }
 */

@@ -5,6 +5,7 @@
 const d3 = require("d3"),
   jsdom = require("jsdom"),
   fs = require("fs"),
+  { ArgumentParser } = require("argparse"),
   htmlStub =
     '<html><head> \
 	<style>.node { stroke: #fff; fill: #ccc; stroke-width: 1.5px; } \
@@ -25,7 +26,7 @@ let getRadius = function (node) {
   if (node.hasOwnProperty("radius")) {
     return node.radius;
   }
-  return Math.sqrt(node.size) + 2;
+  return Math.sqrt(node.size) * 2 + 2;
 };
 
 let layout = function (
@@ -142,7 +143,7 @@ let layout = function (
     .attr("y", (d) => (d.source.y + d.target.y) / 2);
   // save result in an html file
   fs.writeFile(
-    `d3_graph_${name}.html`,
+    `d3_graphs/${name}.html`,
     window.document.documentElement.innerHTML,
     function (err) {
       if (err) {
@@ -156,18 +157,34 @@ let layout = function (
   return nodes;
 };
 
-let args = process.argv.slice(2);
-let metaclusters = JSON.parse(fs.readFileSync(args[0]));
-let metametaclusters = JSON.parse(fs.readFileSync(args[1]));
+const parser = new ArgumentParser({
+  description: "Layout script ",
+});
+
+parser.add_argument("-n", "--name", { type: "str", help: "name" });
+parser.add_argument("-i", "--iter", {
+  type: "int",
+  help: "number of iterations",
+  default: 1000,
+});
+
+let args = parser.parse_args();
+let name = args.name;
+let iterations = args.iter;
+let metaclusters = JSON.parse(
+  fs.readFileSync(`data/${name}.metaclusters.json`)
+);
+let metametaclusters = JSON.parse(
+  fs.readFileSync(`data/${name}.metametaclusters.json`)
+);
 let layouts = [];
-let centers = [];
 let metacluster_sizes = {};
 console.log(metaclusters.length);
 for (let metacluster of metaclusters) {
   let nodes = layout(
     metacluster["nodes"],
     metacluster["edges"],
-    1000,
+    iterations,
     metacluster["id"],
     smwidth,
     smheight,
@@ -182,7 +199,7 @@ for (let metacluster of metaclusters) {
   );
   metacluster_sizes[metacluster["id"]] = d3.max(distances);
   let max_index = d3.maxIndex(distances);
-  metacluster_sizes[metacluster["id"]] += nodes.map(getRadius)[max_index];
+  metacluster_sizes[metacluster["id"]]; // += nodes.map(getRadius)[max_index];
 }
 
 for (let node of metametaclusters["nodes"]) {
@@ -192,13 +209,14 @@ for (let node of metametaclusters["nodes"]) {
 let mmc_layout = layout(
   metametaclusters["nodes"],
   metametaclusters["edges"],
-  1000,
+  iterations,
   "mmc",
   9600,
   9600,
   12
 );
 
+let centers = [];
 let x = metacluster_sizes[0] / 2;
 let y = metacluster_sizes[0] / 2;
 let maxy = 0;
@@ -210,6 +228,7 @@ for (let i = 0; i < mmc_layout.length; i++) {
     center.x = x;
     center.y = y;
   }
+  centers.push(center);
   const mmc_scale = 1;
   for (node of nodes) {
     node.x += center.x * mmc_scale;
@@ -227,13 +246,13 @@ for (let i = 0; i < mmc_layout.length; i++) {
 }
 
 fs.writeFile(
-  "data/us_mainstream_stories_trunc_2020-02-01_2020-02-29.layout.json",
+  `data/${name}.layout.json`,
   JSON.stringify({ layouts: layouts, centers: centers }),
   function (err) {
     if (err) {
       console.log("error saving document", err);
     } else {
-      console.log("big json was saved!");
+      console.log(`data/${name}.layout.json saved!`);
     }
   }
 );
