@@ -1,4 +1,6 @@
-const SIZE = 1200;
+const SIZE = 800;
+const SIDEBAR_WIDTH = 400;
+const DEBUG = false;
 let vertex_data, region_data, tsne, topics;
 let topicSizes = (topicMediaNames = []);
 let mode = 0;
@@ -32,36 +34,47 @@ function drawMaster() {
     topics = topicData;
     topicSizes = [];
     for (k in topics) {
-      topicSizes[k] = topics[k]["_metadata_"]["total"];
-      topicMediaNames[k] = topics[k]["_metadata_"]["media_names"];
-      delete topics[k]["_metadata_"];
+      topicSizes[k] = topics[k]["total"];
+      topicMediaNames[k] = []; //topics[k]["_metadata_"]["media_names"];
     }
-    let min = "2020-02-01";
-    let max = "2020-02-22";
-    let prevDisabled = "";
-    let nextDisabled = "";
-    if (date == min) {
-      prevDisabled = "disabled";
-    }
-    if (date == max) {
-      nextDisabled = "disabled";
-    }
-    //document.getElementById('graphContainer').innerHTML = `<h2>News Landscape ${monthStr} 2020</h2>`
-    document.getElementById(
-      "graphContainer"
-    ).innerHTML = `<h2>2020 News Landscape </h2>`;
-    document.getElementById(
-      "graphContainer"
-    ).innerHTML += `<button onclick="prevMonth()" ${prevDisabled}>prev</button> `;
-    document.getElementById(
-      "graphContainer"
-    ).innerHTML += `<span class="month">${date}-${end_date}</span> `;
-    document.getElementById(
-      "graphContainer"
-    ).innerHTML += `<button onclick="nextMonth()" ${nextDisabled}>next</button>`;
+
+    renderControlPanel(date, end_date);
     drawLayoutGraph();
     //drawRegionsSVG();
   });
+}
+
+function renderControlPanel(date, end_date) {
+  console.log(end_date);
+  const min = "2020-02-01";
+  const max = "2020-02-22";
+  const prevDisabled = date == min;
+  const nextDisabled = date == max;
+  const controls = document.getElementById("controls");
+  const prevButton = getDateButton("Prev", prevDisabled, prevMonth);
+  const dateHeader = document.createElement("span");
+  dateHeader.innerHTML = `${dateToStr(date)} - ${dateToStr(end_date)}`;
+  dateHeader.className = "dateHeader";
+  const nextButton = getDateButton("Next", nextDisabled, nextMonth);
+  controls.innerHTML = "";
+  controls.appendChild(prevButton);
+  controls.appendChild(dateHeader);
+  controls.appendChild(nextButton);
+}
+
+function getDateButton(text, disabled, cb) {
+  let btn = document.createElement("button");
+  if (disabled) {
+    btn.setAttribute("disabled", true);
+  }
+  btn.innerHTML = text;
+  btn.onclick = cb;
+  return btn;
+}
+
+function dateToStr(date) {
+  let d = new Date(date);
+  return d.toDateString();
 }
 
 function nextMonth() {
@@ -72,6 +85,7 @@ function nextMonth() {
   date = nextDate.toISOString().slice(0, 10);
   drawMaster();
 }
+
 function prevMonth() {
   let d = new Date(date);
   d.setUTCHours(d.getUTCHours() + 4);
@@ -184,7 +198,6 @@ function getTerrainColor(t) {
 }
 
 function drawRegionsSVG() {
-  document.getElementById("regionsSVGContainer").hidden = false;
   let renderRegionsSVG = function (region_data, vertex_data) {
     let find_region = function (topic) {
       // return the set of polygons that have this topic and are contiguous
@@ -196,8 +209,8 @@ function drawRegionsSVG() {
     };
     let svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 1 1");
-    svg.setAttribute("width", SIZE);
-    svg.setAttribute("height", SIZE);
+    svg.setAttribute("width", window.innerWidth - SIDEBAR_WIDTH);
+    svg.setAttribute("height", window.innerHeight);
     var rainbow = d3.scaleSequential(d3.interpolateRainbow).domain([0, 100]);
     for (let r of region_data) {
       if (r.isEdge) {
@@ -211,6 +224,8 @@ function drawRegionsSVG() {
       if (r.elevation > 0) {
         //color = getTerrainColor(getTerrain(r));
         color = getTerrainColorInterpolate(r);
+      } else {
+        color = d3.color(color).darker(-r.elevation * 4);
       }
       if (r.shadow == 1) {
         color = d3.color(color).darker(0.5);
@@ -289,8 +304,7 @@ function drawRegionsSVG() {
       console.log(regionData);
       let svg = renderRegionsSVG(regionData, vertexData);
       console.log("done constructing");
-      document.getElementById("svgContainer").innerHTML = "";
-      document.getElementById("svgContainer").appendChild(svg);
+      document.getElementById("svgContainer").replaceChildren(svg);
     });
   });
 }
@@ -303,27 +317,48 @@ let handleMouseOver = function (ev, d) {
 };
 
 let drawCard = function (topic_id, r) {
-  let sorted = Object.entries(topics[topic_id])
-    .filter((a) => a[1] > 2)
+  document.getElementById("placename").innerHTML =
+    topics[topic_id]["region_name"];
+
+  let articles = topics[topic_id]["articles"];
+  renderArticles(articles);
+  if (DEBUG) {
+    renderDebugContent(topic_id);
+  }
+};
+
+let renderDebugContent = function (topic_id) {
+  let relevant_words = topics[topic_id]["relevant_words"]
+    .filter((a) => a[1] > 0)
     .sort(function (a, b) {
       return b[1] - a[1];
-    });
-  let nodes = sorted
+    })
     .map(
       (word_freq) =>
         `<p class='word' style='font-size:${Math.sqrt(word_freq[1]) + 6}pt'>${
           word_freq[0]
         }</p>`
     )
-    .slice(0, 20)
     .join("");
-  document.getElementById("wordContainer").innerHTML = `<p>${topic_id}</p>`;
+  let common_words = topics[topic_id]["common_words"]
+    .filter((a) => a[1] > 0)
+    .sort(function (a, b) {
+      return b[1] - a[1];
+    })
+    .map(
+      (word_freq) =>
+        `<p class='word' style='font-size:${Math.sqrt(word_freq[1]) + 6}pt'>${
+          word_freq[0]
+        }</p>`
+    )
+    .join("");
+
+  document.getElementById(
+    "wordContainer"
+  ).innerHTML += `<p>Size: ${topics[topic_id].total}</p>`;
   document.getElementById(
     "wordContainer"
   ).innerHTML += `<p>Temperature/Mean Subjectivity: ${r.temperature}</p>`;
-  document.getElementById(
-    "wordContainer"
-  ).innerHTML += `<p>Elevation: ${r.elevation}</p>`;
 
   document.getElementById(
     "wordContainer"
@@ -335,11 +370,30 @@ let drawCard = function (topic_id, r) {
     }
   }
   document.getElementById("wordContainer").innerHTML +=
-    "<h3>Commonly spoken words in this cluster</h3>";
-  document.getElementById("wordContainer").innerHTML += nodes;
+    "<h3>Most Relevant Words</h3>";
+  document.getElementById("wordContainer").innerHTML += relevant_words;
   document.getElementById("wordContainer").innerHTML +=
-    "<h3>Breakdown of headlines in this cluster by media outlet";
-  document.getElementById("wordContainer").innerHTML += medianodes;
+    "<h3>Most Common Words</h3>";
+  document.getElementById("wordContainer").innerHTML += common_words;
+};
+
+let renderArticles = function (articles) {
+  let articleList = document.getElementById("articleList");
+  let articleNode = document.createElement("div");
+  for (article of articles) {
+    let linkp = document.createElement("p");
+    let link = document.createElement("a");
+    link.href = article.url;
+    link.className = "articleLink";
+    link.innerHTML = article.title;
+    linkp.appendChild(link);
+    let pDate = document.createElement("span");
+    pDate.innerHTML = dateToStr(article.publish_date);
+    pDate.className = "articleDate";
+    linkp.appendChild(pDate);
+    articleNode.appendChild(linkp);
+  }
+  articleList.replaceChildren(articleNode);
 };
 
 let handleMouseOut = function (ev, d) {
@@ -377,6 +431,7 @@ function drawLayoutGraph() {
 
     const svg = d3
       .create("svg")
+      .attr("class", "layoutSVG")
       /*
       .attr("viewBox", [
         xExt[0] - maxRadius,
@@ -385,7 +440,7 @@ function drawLayoutGraph() {
         yExt[1] - yExt[0] + maxRadius * 2,
       ]);
       */
-      .attr("viewBox", [2400, 2400, 6000, 6000]);
+      .attr("viewBox", [0, 0, 9600, 9600]);
 
     const node = svg
       .append("g")
@@ -395,6 +450,7 @@ function drawLayoutGraph() {
       .attr("r", getSize(1))
       .attr("cx", (d) => d.x)
       .attr("cy", (d) => d.y)
+      .attr("topic", (d) => d.id)
       .attr("fill", gcolor)
       .on("mouseover", handleMouseOver)
       .on("mouseout", handleMouseOut);
@@ -402,9 +458,8 @@ function drawLayoutGraph() {
     return svg.node();
   };
   let jsonName = getName(date, interval, "layout.json");
-  console.log(jsonName);
   d3.json(jsonName).then((data) => {
-    document.getElementById("graphContainer").appendChild(graph(data));
+    document.getElementById("layoutContainer").replaceChildren(graph(data));
   });
 }
 

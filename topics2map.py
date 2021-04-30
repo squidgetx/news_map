@@ -8,15 +8,22 @@ import json
 import logging
 import argparse
 import pandas as pd
-from time import sleep
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.spatial as spatial
-from scipy.spatial import KDTree
 import scipy.stats as stats
 import sys
-from names import getFile, Datafile
-import names
+
 from collections import defaultdict
+from time import sleep
+
+import names
+from names import getFile, Datafile
+
+
+def get_radius(n):
+    # Needs to be synced with layout.js
+    return (n["size"] ** 0.5) * 2 + 2
 
 
 class PolygonMap:
@@ -30,8 +37,10 @@ class PolygonMap:
         # layout is a dict of x, y positions for each topic
 
         pts = np.random.random((n, 2))
-        tree = KDTree(pts)
-        pts_to_remove = tree.query_ball_point(layout_df[["x", "y"]], layout_df["size"])
+        tree = spatial.KDTree(pts)
+        pts_to_remove = tree.query_ball_point(
+            layout_df[["x", "y"]], layout_df["radius"]
+        )
         ptset = set()
         for p in pts_to_remove:
             ptset.update(p)
@@ -41,12 +50,33 @@ class PolygonMap:
         all_pts = pd.concat((topic_df, pt_df))[["x", "y"]]
         voronoi = spatial.Voronoi(all_pts)
 
+        fig = spatial.voronoi_plot_2d(
+            spatial.Voronoi(topic_df[["x", "y"]]),
+            show_vertices=False,
+            line_colors="orange",
+            line_width=2,
+            line_alpha=0.6,
+            point_size=2,
+        )
+        ax = fig.gca()
+        for i, topic in topic_df.iterrows():
+            ax.add_patch(
+                plt.Circle((topic["x"], topic["y"]), topic["radius"], color="#aaa")
+            )
+            ax.text(topic["x"], topic["y"], int(topic["radius"] * largest), fontsize=6)
+
+        pdb.set_trace()
+        fig.set_size_inches(5, 5)
+        plt.xlim(-0.1, 1.1)
+        plt.ylim(1.1, -0.1)
+        plt.show()
+
         self.n_topics = len(topic_df)
         self.topic_df = topic_df
         self.rough_voronoi = voronoi
-        self.rough_kdtree = KDTree(all_pts)
+        self.rough_kdtree = spatial.KDTree(all_pts)
         self.rough_vertices = voronoi.vertices
-        self.topic_kdtree = KDTree(topic_df[["x", "y"]])
+        self.topic_kdtree = spatial.KDTree(topic_df[["x", "y"]])
 
         """
         df = pd.DataFrame(voronoi.vertices, columns=["x", "y"])
@@ -83,7 +113,7 @@ class PolygonMap:
                 # water
                 self.elevation[i] = 0
             else:
-                self.elevation[i] = self.topic_df["size"][macroregion]
+                self.elevation[i] = self.topic_df["radius"][macroregion]
 
             try:
                 _, topic = self.topic_kdtree.query(pt)
@@ -140,7 +170,7 @@ class PolygonMap:
         self.headlines = [[] for i in range(self.n_triangles)]
         self.topics = np.zeros(self.n_triangles)
         # use KD tree to provide nearest neighbor lookups for occasional grid based operation
-        self.tree = KDTree(self.pts)
+        self.tree = spatial.KDTree(self.pts)
 
         # ridge points are pairs of points that have a polygon edge between them.
         # create a adjacency dictionary for the point indices
@@ -164,6 +194,7 @@ class PolygonMap:
         self.elevation = np.zeros(self.n_triangles)
         self.moisture = np.zeros(self.n_triangles)
         self.temperature = np.zeros(self.n_triangles)
+        self.shadow = np.zeros(self.n_triangles)
 
     @staticmethod
     def improve_points(pts, n=3):
@@ -319,7 +350,6 @@ class PolygonMap:
     def calculate_shadows(self):
         sun = np.array([0, 0, 20])
         print("calculating shadows")
-        self.shadow = np.zeros(self.n_triangles)
         for i, simplex in enumerate(self.delaunay.simplices):
             pts = self.delaunay.points[simplex]
             pt = np.mean(pts, axis=0)
@@ -373,6 +403,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Turn TSNE points into map data")
     parser.add_argument("-name", dest="name", required=True, help="name for input data")
     parser.add_argument(
+        "-start",
+        dest="start",
+        help="start date (ISO)",
+    )
+    parser.add_argument(
+        "-interval",
+        dest="interval",
+        default=28,
+        type=int,
+        help="Number of days to include after the given start date",
+    )
+    parser.add_argument(
         "-n",
         dest="n",
         required=False,
@@ -380,28 +422,43 @@ if __name__ == "__main__":
         type=int,
         help="number of polygons to create",
     )
-    args = parser.parse_args()
-
-    m = PolygonMap(args.n, args.name)
-    """
-    scores = np.genfromtxt(
-        getFile(args.name, Datafile.RUST_PROBABILITIES), delimiter=","
+    parser.add_argument(
+        "-group",
+        dest="group",
+        type=int,
+        required=False,
+        help="if provided, a group number to restrict to (useful for debugging)",
     )
-    headlines = pd.read_csv(getFile(args.name, Datafile.HEADLINES_TSV), sep="\t")
-    """
+    parser.add_argument(
+        "-matplotlib",
+        dest="matplotlib",
+        action="store_const",
+        const=True,
+        required=False,
+        help="if provided, output intermediate matplotlibs",
+    )
+    args = parser.parse_args()
+    name = names.getName(args.name, args.start, args.interval)
 
     topic_df = pd.read_csv(
-        getFile(args.name, Datafile.TOPIC_METADATA_TSV), sep="\t", index_col=0
+        getFile(name, Datafile.TOPIC_METADATA_TSV), sep="\t", index_col=0
     )
 
-    with open(getFile(args.name, Datafile.LAYOUT), "rt") as f:
+    with open(getFile(name, Datafile.LAYOUT), "rt") as f:
         layout = json.load(f)["layouts"]
         layout = sorted([item for sl in layout for item in sl], key=lambda x: x["id"])
         layout_df = pd.DataFrame(layout)
+    # this should be moved somewhere else :P
     topic_df["x"] = layout_df["x"]
     topic_df["y"] = layout_df["y"]
-    topic_df["size"] **= 0.5
+    topic_df["group"] = layout_df["group"]
+    topic_df = topic_df.dropna()
+
+    if args.group is not None:
+        topic_df = topic_df[topic_df["group"] == args.group]
+
     topic_df = topic_df.reset_index()
+    # Now, topic #s (except assigned at the end in export, are the col indexes)
 
     # scale the x and y appropriately. Must be scaled together, not separately!
     xmin = np.min(topic_df["x"])
@@ -415,8 +472,11 @@ if __name__ == "__main__":
     topic_df["y"] -= ymin
     topic_df["x"] /= largest
     topic_df["y"] /= largest
-    topic_df["size"] /= largest
+    topic_df["radius"] = get_radius(topic_df)
+    topic_df["radius"] /= largest
+    print(largest)
 
+    m = PolygonMap(args.n, name)
     m.create_initial_polygons(topic_df)
     m.initial_elevation()
     m.normalize()

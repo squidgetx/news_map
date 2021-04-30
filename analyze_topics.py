@@ -1,5 +1,8 @@
 # Python script to take an input corpus and output topics
 import random
+import tracery
+from tracery.modifiers import base_english
+
 import scipy
 import json
 import itertools
@@ -17,15 +20,24 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import topic2tsne
 from names import getFile, Datafile
+import names
 
 import pdb
 
+
+def clamp(n, smallest, largest):
+    return max(smallest, min(n, largest))
+
+
+def rank(arr, val):
+    # given value 0-1 get nearest index from array
+    val = clamp(val, 0, 0.99)
+    return arr[int(val * len(arr))]
+
+
 land_names = [
     "archipelago",
-    "continent" "fjord",
-    "island",
-    "islands",
-    "peninsula",
+    # "peninsula",
     "badlands",
     "bayou",
     "beach",
@@ -49,6 +61,8 @@ land_names = [
     "swamp",
     "plateau",
     "grassland",
+    "mountain",
+    "peaks",
     "tundra",
 ]
 
@@ -60,25 +74,99 @@ def score_sentiment(sentence):
     return subjectivity
 
 
+def get_degrees(name, topics_json):
+    # Maybe this code should live in cluster_topics?
+    compgraphs = names.readJSON(name, Datafile.METACLUSTERS)
+    for cg in compgraphs:
+        for node in cg["nodes"]:
+            if node["id"] in topics_json:
+                topics_json[node["id"]]["degree"] = node["degree"]
+    return topics_json
+
+
+def get_name(topics_json, topic):
+    if topics_json[topic]["size"] == 0:
+        return ""
+    # Sort by the second value in the tuple which is the float representation
+    # of the weight
+    top_cw = sorted(
+        topics_json[topic]["common_words"], key=lambda k: float(k[1]), reverse=True
+    )[0][0].split("_")
+    top_rw = sorted(
+        topics_json[topic]["relevant_words"], key=lambda k: float(k[1]), reverse=True
+    )[0][0].split("_")
+    # Some simple heuristics:
+    # Put the shorter one first
+    # Only use one if it's a triple
+
+    # Multiplex by node degree, elevation, and alliteration
+    rules = {
+        "origin": ["#land# of #words#", "#words# #land#"],
+        "words": ["#w# #r#", "#r# #w#", "#r#-#w#", "#w#-#r#", "#w#", "#r#"],
+        "r": " ".join([w.capitalize() for w in top_cw]),
+        "w": " ".join([w.capitalize() for w in top_rw]),
+        "land": [w.capitalize() for w in land_names],
+    }
+    grammar = tracery.Grammar(rules)
+    grammar.add_modifiers(base_english)
+    return grammar.flatten("#origin#")
+
+
+def get_word_relevance(name, topics_json):
+    print("Calcuating word relevance")
+
+    dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))
+    LAMBDA = 0.7
+    topic_ndarray = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
+    ps_token_corpus = np.array(
+        [dictionary.cfs[token] / dictionary.num_pos for token in dictionary.keys()]
+    )
+    for topic, row in enumerate(topic_ndarray):
+        sum_topic = np.sum(row)
+        if sum_topic == 0:
+            # This topic is empty lol
+            continue
+        topic_word_relevance = (
+            row / sum_topic * LAMBDA + (1 - LAMBDA) * row / sum_topic / ps_token_corpus
+        )
+        top_relevant_tokens = np.argsort(topic_word_relevance)[::-1][0:20]
+        top_common_tokens = np.argsort(row)[::-1][0:20]
+        topics_json[topic]["relevant_words"] = [
+            [dictionary.id2token[tok], topic_word_relevance[tok]]
+            for tok in top_relevant_tokens
+        ]
+        topics_json[topic]["common_words"] = [
+            [dictionary.id2token[tok], topic_word_relevance[tok]]
+            for tok in top_common_tokens
+        ]
+        # del topics_json[str(topic)]["words"]
+
+    return topics_json
+
+
 def analyze_topics(name, headlines=None, scores=None):
     if headlines == None:
         headlines = pd.read_csv(open(getFile(name, Datafile.HEADLINES_TSV)), sep="\t")
     if scores == None:
         scores = pd.read_csv(open(getFile(name, Datafile.SCORES)), sep="\t")
 
-    headlines = headlines[headlines["title"].notnull()].reset_index()
+    # rps = np.genfromtxt(getFile(name, Datafile.RUST_PROBABILITIES), delimiter=",")
+    # headlines = headlines[headlines["title"].notnull()].reset_index()
+    assert len(headlines) == len(scores)
 
+    scores.columns = scores.columns.astype(int)
     scores_sums = scores.sum()
-    scores_sums.index = scores_sums.index.astype(int)
     scores_sums = scores_sums.sort_index()
 
     sentiments = np.zeros(len(headlines))
 
+    """
     for i, row in headlines.iterrows():
         try:
             sentiments[i] = score_sentiment(row["title"])
         except:
             pdb.set_trace()
+            """
 
     headlines["subjectivity"] = sentiments
 
@@ -87,16 +175,36 @@ def analyze_topics(name, headlines=None, scores=None):
     # get normalized count by media_name
     media_diversity = (
         headlines.groupby(["dominant_topic", "media_name"])
-        .count()["index"]
+        .count()["title"]
         .unstack()
         .fillna(0)
         .apply(lambda x: x / np.sum(x))
         .apply(lambda x: scipy.stats.mstats.gmean(x) / np.mean(x), axis=1)
     )
+    assert (scores_sums.index == subj_map.index).all()
     subj_map["media_diversity"] = media_diversity
     subj_map["count"] = count_map
     subj_map["size"] = scores_sums
     subj_map.to_csv(getFile(name, Datafile.TOPIC_METADATA_TSV), sep="\t")
+    records = subj_map.to_dict(orient="index")
+    for topic in subj_map.index:
+        recent_headlines = scores[topic][scores[topic] > 0.999].iloc[::-1][0:100]
+        try:
+            hdf = headlines.iloc[recent_headlines.index][
+                ["title", "url", "media_name", "publish_date"]
+            ]
+            records[topic]["articles"] = hdf.to_dict(orient="records")
+        except:
+            pdb.set_trace()
+
+    records = get_degrees(name, records)
+    records = get_word_relevance(name, records)
+
+    for topic in records:
+        records[topic]["region_name"] = get_name(records, topic)
+
+    with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
+        f.write(json.dumps(records))
 
 
 if __name__ == "__main__":
@@ -104,6 +212,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "-name", dest="name", required=True, help="filename for training"
     )
+    parser.add_argument(
+        "-start",
+        dest="start",
+        help="start date (ISO)",
+    )
+    parser.add_argument(
+        "-interval",
+        dest="interval",
+        default=28,
+        type=int,
+        help="Number of days to include after the given start date",
+    )
     args = parser.parse_args()
-    name = args.name
+    name = names.getName(args.name, args.start, args.interval)
     analyze_topics(name)

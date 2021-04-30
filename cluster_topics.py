@@ -1,4 +1,5 @@
 # Python script to take an input corpus and output topics
+import subprocess
 import random
 import json
 import itertools
@@ -14,6 +15,7 @@ from gensim import corpora
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import topic2tsne
+import names
 from names import getFile, Datafile
 
 import pdb
@@ -81,9 +83,9 @@ def get_edges(graph, components, topic_distances):
                 graph.remove_node(node)
                 unconnected_nodes.append(node)
 
-    for node in unconnected_nodes:
-        selected = random.choice(list(graph.nodes()))
-        graph.add_edge(selected, node, weight=3)
+    # for node in unconnected_nodes:
+    #    selected = random.choice(list(graph.nodes()))
+    #    graph.add_edge(selected, node, weight=3)
     return graph
 
 
@@ -113,18 +115,6 @@ def build_graph(distances, n_nodes):
                 continue
             edges[pair["a"]].append({"target": pair["b"], "value": pair["distance"]})
             edges[pair["b"]].append({"target": pair["a"], "value": pair["distance"]})
-    for pair in distances:
-        if pair["distance"] > 0.75 and pair["distance"] < 0.8:
-            if len(edges[pair["a"]]) < 1 or len(edges[pair["b"]]) < 1:
-                existing_edges = [e["target"] for e in edges[pair["a"]]]
-                if pair["b"] in existing_edges:
-                    continue
-                edges[pair["a"]].append(
-                    {"target": pair["b"], "value": pair["distance"]}
-                )
-                edges[pair["b"]].append(
-                    {"target": pair["a"], "value": pair["distance"]}
-                )
 
     links = []
     for node in edges:
@@ -145,25 +135,34 @@ def build_and_save_graph(name, prevname=None):
     df = pd.read_csv(getFile(name, Datafile.DISTANCE_JS), sep="\t", index_col=0)
     df.columns = df.columns.astype(int)
 
+    # get the sizes
+    sizes = names.getTopicSizes(name)
+
     # create array of distance pairs
-    # TODO: figure out how to drop topics with size of 0
-    topics = list(df.columns)
+    # only include edges with topics that are present in the sizes records
+    # this drops all topics that have size zero
+    topics = list(sizes.keys())
     edges = []
-    for row in df.iterrows():
-        for topic in topics:
-            edges.append({"a": int(row[0]), "b": int(topic), "distance": row[1][topic]})
+    # todo refactor this hot mess
+    for i, topic_a in enumerate(topics):
+        for j, topic_b in enumerate(topics):
+            if j <= i:
+                continue
+            try:
+                edges.append(
+                    {"a": topic_a, "b": topic_b, "distance": df[topic_a][topic_b]}
+                )
+            except:
+                pdb.set_trace()
 
     data = build_graph(edges, len(df))
+
     with open(getFile(name, Datafile.TOPIC_ADJACENCY), "wt") as f:
         json.dump(data, f)
 
-    # get the sizes
-    topic_json = json.load(open(getFile(name, Datafile.TOPIC_JSON)))
-    sizes = {}
-    for i, topic in enumerate(topic_json):
-        sizes[i] = topic["_metadata_"]["total"]
     for node in data["nodes"]:
-        node["size"] = sizes[node["id"]]
+        node["size"] = sizes.get(node["id"], 0)
+        # todo; we should be dropping ndoes of size 0 by this point
 
     if prevname:
         prevLayout = {}
@@ -186,6 +185,27 @@ def build_and_save_graph(name, prevname=None):
         layout_graph_with_predecessor(
             data, df, name, interDistances, prevLayout, centers
         )
+
+        stream_p = subprocess.Popen(
+            [
+                "node",
+                "layout.js",
+                "-n",
+                f"{name}",
+                "-i",
+                "4",
+            ],
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        while True:
+            output = stream_p.stdout.readline()
+            if stream_p.poll() is not None:
+                break
+            if output:
+                print(output.strip())
+
     else:
         layout_graph(data, df, name)
 
@@ -246,9 +266,7 @@ def layout_graph_with_predecessor(
 
 
 def show_top(topics, n):
-    return sorted(topics[n].items(), key=lambda k: k[1] if k[0] != "_metadata_" else 0)[
-        -10:
-    ]
+    return sorted(topics[n]["words"].items(), key=lambda k: k[1])[-10:]
 
 
 def export_components(components, name="metaclusters.json"):
@@ -282,7 +300,7 @@ def export_graph(graph, name="metametaclusters.json"):
         f.write(json.dumps(export))
 
 
-def decompose(graph, flow_threshold=3, ratio_threshold=0.15):
+def decompose(graph, flow_threshold=4.5, ratio_threshold=0.05):
     """
     given a graph with jensen shannon distances as the weights,
     return a min cut (as a 2-tuple of node IDs) if one exists
@@ -312,8 +330,8 @@ def decompose(graph, flow_threshold=3, ratio_threshold=0.15):
                 cut[0] < flow_threshold
                 and ratio > ratio_threshold
                 and cut not in min_cuts
-                and sizes[0] > 3
-                and sizes[1] > 3
+                and sizes[0] > 1
+                and sizes[1] > 1
             ):
                 min_cut_data.append([cut[0], ratio, len(min_cuts)])
                 min_cuts.append(cut)
@@ -327,7 +345,7 @@ def decompose(graph, flow_threshold=3, ratio_threshold=0.15):
 
 def cut_components(components, n=3):
     edges = []
-    for _ in range(n):
+    for it in range(n):
         no_cuts = True
         new_components = []
         for graph in components:
@@ -336,11 +354,18 @@ def cut_components(components, n=3):
                 new_components.append(graph)
                 continue
             no_cuts = False
-            print(_, cut)
+            print(it, cut)
             subgraph1 = graph.subgraph(cut[1][0]).copy()
             subgraph2 = graph.subgraph(cut[1][1]).copy()
             cut_edges = graph.edges() - subgraph1.edges() - subgraph2.edges()
-            edges.extend(list(cut_edges))
+            for edge in list(cut_edges):
+                edges.append(
+                    {
+                        "source": edge[0],
+                        "target": edge[1],
+                        "weight": 8 / (it ** 0.5 + 1),
+                    }
+                )
             new_components.append(subgraph1)
             new_components.append(subgraph2)
         components = new_components
@@ -365,17 +390,18 @@ def layout_graph(
     if initPositions:
         for i in initPositions:
             node = initPositions[i]
-            graph.nodes[i]["x"] = node["position"][0] - node["center"]["x"]
-            graph.nodes[i]["y"] = node["position"][1] - node["center"]["y"]
+            graph.nodes[i]["x"] = node["position"][0]  # - node["center"]["x"]
+            graph.nodes[i]["y"] = node["position"][1]  # - node["center"]["y"]
+            graph.nodes[i]["initial_group"] = node.get("group")
+            graph.nodes[i]["initial_topic"] = node.get("topic")
 
     graph.add_weighted_edges_from(
         [(n["source"], n["target"], n["value"]) for n in data["links"]]
     )
     components = sorted(nx.connected_components(graph), key=len, reverse=True)
     compgraphs = [graph.subgraph(comp).copy() for comp in components]
-    compgraphs, edges = cut_components(compgraphs, n=10)
-
     # min cuts
+    compgraphs, edges = cut_components(compgraphs, n=10)
 
     print("forming metametaclusters")
     # Second layer force layout:
@@ -385,27 +411,42 @@ def layout_graph(
     for i, graph in enumerate(compgraphs):
         for node in list(graph.nodes):
             node_lookup[node] = i
+            graph.nodes[node]["group"] = i
+            graph.nodes[node]["degree"] = graph.degree[node]
+            graph.nodes[node]["type"] = "core"
+            if graph.nodes[node]["degree"] == 1:
+                graph.nodes[node]["type"] = "leaf"
+            if graph.nodes[node]["degree"] == 0:
+                graph.nodes[node]["type"] = "unconnected"
+            for edge in edges:
+                if edge["source"] == node:
+                    graph.nodes[node]["type"] = "bridge"
+                if edge["target"] == node:
+                    graph.nodes[node]["type"] = "bridge"
 
     # then, we can just iterate through the cut edges
     mmc_graph = nx.Graph()
     mmc_graph.add_nodes_from([i for i in range(len(compgraphs))])
     for edge in edges:
         # always go small -> large
-        c1 = min(node_lookup[edge[0]], node_lookup[edge[1]])
-        c2 = max(node_lookup[edge[0]], node_lookup[edge[1]])
+        c1 = min(node_lookup[edge["source"]], node_lookup[edge["target"]])
+        c2 = max(node_lookup[edge["source"]], node_lookup[edge["target"]])
         if c2 in mmc_graph[c1]:
-            mmc_graph[c1][c2]["weight"] += 1
+            mmc_graph[c1][c2]["weight"] /= 2
         else:
-            mmc_graph.add_edge(c1, c2, weight=1)
+            mmc_graph.add_edge(c1, c2, weight=10)
 
-    mmc_graph = get_edges(mmc_graph, compgraphs, distances)
+    # mmc_graph = get_edges(mmc_graph, compgraphs, distances)
     if initPositions:
         for i, graph in enumerate(compgraphs):
             cluster_centers = [
                 [initPositions[node]["center"]["x"], initPositions[node]["center"]["y"]]
                 for node in list(graph.nodes)
             ]
-            center = np.mean(cluster_centers, axis=0)
+            try:
+                center = np.mean(cluster_centers, axis=0)
+            except:
+                pdb.set_trace()
             mmc_graph.nodes[i]["x"] = center[0]
             mmc_graph.nodes[i]["y"] = center[1]
 
@@ -413,6 +454,8 @@ def layout_graph(
     print("components exported")
     export_graph(mmc_graph, getFile(name, Datafile.METAMETACLUSTERS))
     print("metametaclusters exported")
+    with open(getFile(name, Datafile.FULL_GRAPH), "wt") as f:
+        f.write(json.dumps(edges))
     return
 
     # Each component is like a continent.
