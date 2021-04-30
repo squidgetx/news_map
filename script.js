@@ -39,8 +39,8 @@ function drawMaster() {
     }
 
     renderControlPanel(date, end_date);
-    drawLayoutGraph();
-    //drawRegionsSVG();
+    //drawLayoutGraph();
+    drawRegionsSVG();
   });
 }
 
@@ -150,8 +150,9 @@ function getTerrainColorInterpolate(r) {
     d3.interpolateRgb(getTerrainColor("rock"), getTerrainColor("snow")),
   ];
   let len = colors.length;
-  let color = colors[Math.floor(r.elevation * len)](
-    r.elevation * len - Math.floor(r.elevation * len)
+  let elev = constrain(r.elevation, 0, 0.999);
+  let color = colors[Math.floor(elev * len)](
+    r.elevation * len - Math.floor(elev * len)
   );
   return color;
   /*

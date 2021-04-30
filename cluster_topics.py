@@ -16,11 +16,13 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 import topic2tsne
 import names
+import util
 from names import getFile, Datafile
 
 import pdb
 
 
+"""
 def get_distances(graphs, distances):
     cg_distances = np.zeros((len(graphs), len(graphs)))
     for i, cg1 in enumerate(graphs):
@@ -83,51 +85,33 @@ def get_edges(graph, components, topic_distances):
                 graph.remove_node(node)
                 unconnected_nodes.append(node)
 
-    # for node in unconnected_nodes:
-    #    selected = random.choice(list(graph.nodes()))
-    #    graph.add_edge(selected, node, weight=3)
     return graph
+"""
 
 
-def score_topic(topic):
-    # given a topic distrubution, return a 2D shape describing
-    # its XY position on the dimensions human/world and insignificant/significant
-    return
-
-
-def score_metacluster(topics, sizes, topic_ndarray):
-    # given a metacluster, score it on our arbitrary x/y plane
-    #
-    return
-
-
-def build_graph(distances, n_nodes):
+def build_graph(df, sizes: dict):
     """
-    given distance array, build graph that we will convert into continent locations
-    assume distances array of dicts?
+    Given distance DF and list of valid topic indexes,
+    build initial graph with weighted edges
+    Return nx.graph object
     """
-    edges = defaultdict(list)
-    # phase 1:
-    for pair in distances:
-        if pair["distance"] < 0.75 and pair["distance"] > 0:
-            existing_edges = [e["target"] for e in edges[pair["a"]]]
-            if pair["b"] in existing_edges:
+    graph = nx.Graph()
+
+    for i in sizes:
+        graph.add_node(i, size=sizes[i])
+
+    topics = list(sizes.keys())
+
+    for i, topic_a in enumerate(topics):
+        for j, topic_b in enumerate(topics):
+            if j <= i:
                 continue
-            edges[pair["a"]].append({"target": pair["b"], "value": pair["distance"]})
-            edges[pair["b"]].append({"target": pair["a"], "value": pair["distance"]})
+            distance = df[topic_a][topic_b]
+            assert distance > 0
+            if distance < 0.75:
+                graph.add_edge(topic_a, topic_b, weight=distance)
 
-    links = []
-    for node in edges:
-        links.extend(
-            [
-                {"source": node, "target": n["target"], "value": n["value"]}
-                for n in edges[node]
-            ]
-        )
-    return {
-        "nodes": [{"id": node_id} for node_id in range(n_nodes)],
-        "links": links,
-    }
+    return graph
 
 
 def build_and_save_graph(name, prevname=None):
@@ -137,32 +121,9 @@ def build_and_save_graph(name, prevname=None):
 
     # get the sizes
     sizes = names.getTopicSizes(name)
-
-    # create array of distance pairs
-    # only include edges with topics that are present in the sizes records
-    # this drops all topics that have size zero
     topics = list(sizes.keys())
-    edges = []
-    # todo refactor this hot mess
-    for i, topic_a in enumerate(topics):
-        for j, topic_b in enumerate(topics):
-            if j <= i:
-                continue
-            try:
-                edges.append(
-                    {"a": topic_a, "b": topic_b, "distance": df[topic_a][topic_b]}
-                )
-            except:
-                pdb.set_trace()
 
-    data = build_graph(edges, len(df))
-
-    with open(getFile(name, Datafile.TOPIC_ADJACENCY), "wt") as f:
-        json.dump(data, f)
-
-    for node in data["nodes"]:
-        node["size"] = sizes.get(node["id"], 0)
-        # todo; we should be dropping ndoes of size 0 by this point
+    graph = build_graph(df, sizes)
 
     if prevname:
         prevLayout = {}
@@ -183,10 +144,9 @@ def build_and_save_graph(name, prevname=None):
             open(getFile(name, Datafile.INTERDISTANCE_JS)), sep="\t", index_col=0
         )
         layout_graph_with_predecessor(
-            data, df, name, interDistances, prevLayout, centers
+            graph, df, name, interDistances, prevLayout, centers
         )
-
-        stream_p = subprocess.Popen(
+        util.run_subprocess(
             [
                 "node",
                 "layout.js",
@@ -195,23 +155,17 @@ def build_and_save_graph(name, prevname=None):
                 "-i",
                 "4",
             ],
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
         )
-        while True:
-            output = stream_p.stdout.readline()
-            if stream_p.poll() is not None:
-                break
-            if output:
-                print(output.strip())
 
     else:
-        layout_graph(data, df, name)
+        layout_graph(graph, df, name)
+        util.run_subprocess(
+            ["node", "layout.js", "-n", f"{name}", "-i", "1000", "--grid"],
+        )
 
 
 def layout_graph_with_predecessor(
-    data, distances, name, interDistances, prevLayout, prevCenters
+    graph, distances, name, interDistances, prevLayout, prevCenters
 ):
     # given a set of metaclusters
     # and a previous set of metaclusters, with their positions
@@ -262,17 +216,18 @@ def layout_graph_with_predecessor(
     topics = json.load(open(getFile(name, Datafile.TOPIC_JSON)))
     prevname = "us_mainstream_stories_trunc_2020-02-01_2020-02-29"
     ptopics = json.load(open(getFile(prevname, Datafile.TOPIC_JSON)))
-    layout_graph(data, distances, name, initial, prevLayout, microIter=16, macroIter=4)
-
-
-def show_top(topics, n):
-    return sorted(topics[n]["words"].items(), key=lambda k: k[1])[-10:]
+    layout_graph(graph, distances, name, initial, prevLayout, microIter=16, macroIter=4)
 
 
 def export_components(components, name="metaclusters.json"):
     export = []
     for idx, nxgraph in enumerate(components):
-        nodes = [t[1] for t in nxgraph.nodes.data()]
+        pdb.set_trace()
+        nodes = []
+        for t in nxgraph.nodes.data():
+            node = {"id": t[0]}
+            node.update(t[1])
+            nodes.append(node)
         links = []
         for i, t in enumerate(nxgraph.edges.data()):
             link = {"source": t[0], "target": t[1]}
@@ -376,7 +331,7 @@ def cut_components(components, n=3):
 
 
 def layout_graph(
-    data,
+    graph,
     distances,
     name,
     initPositions=None,
@@ -385,8 +340,6 @@ def layout_graph(
     macroIter=70,
 ):
     print("forming metaclusters")
-    graph = nx.Graph()
-    graph.add_nodes_from([(node["id"], node) for node in data["nodes"]])
     if initPositions:
         for i in initPositions:
             node = initPositions[i]
@@ -395,9 +348,6 @@ def layout_graph(
             graph.nodes[i]["initial_group"] = node.get("group")
             graph.nodes[i]["initial_topic"] = node.get("topic")
 
-    graph.add_weighted_edges_from(
-        [(n["source"], n["target"], n["value"]) for n in data["links"]]
-    )
     components = sorted(nx.connected_components(graph), key=len, reverse=True)
     compgraphs = [graph.subgraph(comp).copy() for comp in components]
     # min cuts
@@ -458,6 +408,7 @@ def layout_graph(
         f.write(json.dumps(edges))
     return
 
+    """
     # Each component is like a continent.
     # this function attempts to lay out continents using a naive greedy algorithm
     # we assume that there aren't that many continents that should be "near" each other.
@@ -553,6 +504,7 @@ def layout_graph(
 
     with open(getFile(name, Datafile.LAYOUT), "wt") as f:
         f.write(json.dumps({"layouts": layouts, "centers": centers}))
+    """
 
 
 if __name__ == "__main__":

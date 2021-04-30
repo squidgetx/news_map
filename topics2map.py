@@ -26,6 +26,28 @@ def get_radius(n):
     return (n["size"] ** 0.5) * 2 + 2
 
 
+def plt_voronoi(pts, topics):
+    fig = spatial.voronoi_plot_2d(
+        spatial.Voronoi(pts),
+        show_vertices=False,
+        line_colors="orange",
+        line_width=2,
+        line_alpha=0.6,
+        point_size=2,
+    )
+    ax = fig.gca()
+    for i, topic in topics.iterrows():
+        ax.add_patch(
+            plt.Circle((topic["x"], topic["y"]), topic["radius"], color="#aaa")
+        )
+        # ax.text(topic["x"], topic["y"], int(topic["radius"] * largest), fontsize=6)
+
+    fig.set_size_inches(5, 5)
+    plt.xlim(-0.1, 1.1)
+    plt.ylim(1.1, -0.1)
+    plt.show()
+
+
 class PolygonMap:
     # invariant: all points between 0-1
     adj_points = defaultdict(list)
@@ -33,10 +55,15 @@ class PolygonMap:
 
     headlines = []
 
-    def create_initial_polygons(self, layout_df, n=2048):
+    def create_initial_polygons(self, layout_df, density=4):
         # layout is a dict of x, y positions for each topic
 
+        mean_size = np.quantile(layout_df["radius"] ** 2 * 3.14, 0.25)
+        # area is 1x1
+        n = int(1 / mean_size * density)
+
         pts = np.random.random((n, 2))
+        pts = self.improve_points(pts)
         tree = spatial.KDTree(pts)
         pts_to_remove = tree.query_ball_point(
             layout_df[["x", "y"]], layout_df["radius"]
@@ -47,36 +74,30 @@ class PolygonMap:
         pts = np.delete(pts, list(ptset), axis=0)
         pt_df = pd.DataFrame(pts, columns=["x", "y"])
 
-        all_pts = pd.concat((topic_df, pt_df))[["x", "y"]]
+        # Generate extra points for each topic
+        topic_points = []
+        for i, row in layout_df.iterrows():
+            n_pts = int(row["radius"] ** 2 * 3.14 / mean_size * density)
+            topic_points.append([row["x"], row["y"], i])
+            for _ in range(n_pts):
+                theta = np.random.random() * 3.14 * 2
+                rad = np.random.random() * row["radius"]
+                x = row["x"] + np.cos(theta) * rad
+                y = row["y"] + np.sin(theta) * rad
+                topic_points.append([x, y, i])
+        topic_points_df = pd.DataFrame(topic_points, columns=["x", "y", "topic"])
+
+        all_pts = pd.concat((topic_points_df, pt_df))[["x", "y"]]
         voronoi = spatial.Voronoi(all_pts)
+        # plt_voronoi(all_pts, layout_df)
 
-        fig = spatial.voronoi_plot_2d(
-            spatial.Voronoi(topic_df[["x", "y"]]),
-            show_vertices=False,
-            line_colors="orange",
-            line_width=2,
-            line_alpha=0.6,
-            point_size=2,
-        )
-        ax = fig.gca()
-        for i, topic in topic_df.iterrows():
-            ax.add_patch(
-                plt.Circle((topic["x"], topic["y"]), topic["radius"], color="#aaa")
-            )
-            ax.text(topic["x"], topic["y"], int(topic["radius"] * largest), fontsize=6)
-
-        pdb.set_trace()
-        fig.set_size_inches(5, 5)
-        plt.xlim(-0.1, 1.1)
-        plt.ylim(1.1, -0.1)
-        plt.show()
-
-        self.n_topics = len(topic_df)
-        self.topic_df = topic_df
+        self.n_topics = len(layout_df)
+        self.topic_df = layout_df
+        self.topic_points_df = topic_points_df
         self.rough_voronoi = voronoi
         self.rough_kdtree = spatial.KDTree(all_pts)
         self.rough_vertices = voronoi.vertices
-        self.topic_kdtree = spatial.KDTree(topic_df[["x", "y"]])
+        self.topic_kdtree = spatial.KDTree(topic_points_df[["x", "y"]])
 
         """
         df = pd.DataFrame(voronoi.vertices, columns=["x", "y"])
@@ -108,17 +129,21 @@ class PolygonMap:
         for i, simplex in enumerate(self.delaunay.simplices):
             pts = self.delaunay.points[simplex]
             pt = np.mean(pts, axis=0)
-            _, macroregion = self.rough_kdtree.query(pt)
-            if macroregion >= self.n_topics:
+            _, tpt = self.rough_kdtree.query(pt)
+            if tpt >= len(self.topic_points_df):
                 # water
                 self.elevation[i] = 0
             else:
-                self.elevation[i] = self.topic_df["radius"][macroregion]
+                topic = int(self.topic_points_df["topic"][tpt])
+                self.elevation[i] = self.topic_df["radius"][topic]
 
             try:
-                _, topic = self.topic_kdtree.query(pt)
+                """
+                _, pt = self.topic_kdtree.query(pt)
+                topic = int(self.topic_points_df["topic"][pt])
                 self.moisture[i] = self.topic_df["subjectivity"][topic]
                 self.temperature[i] = self.topic_df["media_diversity"][topic]
+                """
             except:
                 pdb.set_trace()
 
@@ -143,7 +168,8 @@ class PolygonMap:
                 pts = self.delaunay.points[simplex]
                 pt = np.mean(pts, axis=0)
                 dist, macroregion = self.topic_kdtree.query(pt)
-                self.topics[i] = self.topic_df["dominant_topic"][macroregion]
+                topic = int(self.topic_points_df["topic"][macroregion])
+                self.topics[i] = topic
             else:
                 self.topics[i] = -1
 
@@ -195,6 +221,7 @@ class PolygonMap:
         self.moisture = np.zeros(self.n_triangles)
         self.temperature = np.zeros(self.n_triangles)
         self.shadow = np.zeros(self.n_triangles)
+        self.flux_map = np.zeros(self.n_triangles)
 
     @staticmethod
     def improve_points(pts, n=3):
@@ -279,7 +306,7 @@ class PolygonMap:
         # Create a sorted list of nodes by height, keep track of the indexes
         pd_heightmap_sorted = [(i, val) for i, val in enumerate(pd_heightmap)]
         pd_heightmap_sorted.sort(key=lambda x: x[1], reverse=True)
-        flux_map = np.array([1 for _ in range(len(pd_heightmap))])
+        self.flux_map = np.array([1 for _ in range(len(pd_heightmap))])
         for node in pd_heightmap_sorted:
             nonedge_neighbors = [n for n in self.delaunay.neighbors[node[0]] if n != -1]
             neighbor_heights = pd_heightmap[nonedge_neighbors]
@@ -448,16 +475,17 @@ if __name__ == "__main__":
         layout = json.load(f)["layouts"]
         layout = sorted([item for sl in layout for item in sl], key=lambda x: x["id"])
         layout_df = pd.DataFrame(layout)
+        layout_df.index = layout_df["id"]
     # this should be moved somewhere else :P
+    assert (topic_df.index == layout_df.index).all()
     topic_df["x"] = layout_df["x"]
     topic_df["y"] = layout_df["y"]
     topic_df["group"] = layout_df["group"]
-    topic_df = topic_df.dropna()
 
     if args.group is not None:
         topic_df = topic_df[topic_df["group"] == args.group]
 
-    topic_df = topic_df.reset_index()
+    # topic_df = topic_df.reset_index()
     # Now, topic #s (except assigned at the end in export, are the col indexes)
 
     # scale the x and y appropriately. Must be scaled together, not separately!
@@ -481,11 +509,11 @@ if __name__ == "__main__":
     m.initial_elevation()
     m.normalize()
     m.round_hills()
-    m.smooth(n=3)
-    m.erode()
-    m.reset_sea_level(quantile=0.8)
-    m.smooth_coastline()
-    m.smooth_coastline()
+    # m.smooth(n=3)
+    # m.erode()
+    # m.reset_sea_level(quantile=0.8)
+    # Km.smooth_coastline()
+    # m.smooth_coastline()
     m.assign_topics()
-    m.calculate_shadows()
+    # m.calculate_shadows()
     m.export()
