@@ -19,7 +19,7 @@ class Datafile(Enum):
     DISTANCE_JS = ".distanceJS.tsv"
     DISTANCE_WMD = ".distanceWMD.tsv"
     MDS = ".mds.tsv"
-    TOPIC_ADJACENCY = ".topic_adjacency.json"
+    GRAPH_PICKLE = ".graph.gpickle"
     LAYOUT = ".layout.json"
     REGIONS_TSV = ".regions.tsv"
     POINTS_TSV = ".points.tsv"

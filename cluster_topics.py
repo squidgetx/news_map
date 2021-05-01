@@ -222,7 +222,6 @@ def layout_graph_with_predecessor(
 def export_components(components, name="metaclusters.json"):
     export = []
     for idx, nxgraph in enumerate(components):
-        pdb.set_trace()
         nodes = []
         for t in nxgraph.nodes.data():
             node = {"id": t[0]}
@@ -339,6 +338,8 @@ def layout_graph(
     microIter=50,
     macroIter=70,
 ):
+    nx.write_gpickle(graph, getFile(name, Datafile.GRAPH_PICKLE))
+
     print("forming metaclusters")
     if initPositions:
         for i in initPositions:

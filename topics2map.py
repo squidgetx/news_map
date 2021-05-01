@@ -2,8 +2,11 @@
 # Heavily inspired by https://github.com/mewo2/deserts
 
 import pdb
+import networkx as nx
+import scipy
 
 import numpy as np
+import itertools
 import json
 import logging
 import argparse
@@ -28,7 +31,7 @@ def get_radius(n):
 
 def plt_voronoi(pts, topics):
     fig = spatial.voronoi_plot_2d(
-        spatial.Voronoi(pts),
+        spatial.Voronoi(pts[["x", "y"]]),
         show_vertices=False,
         line_colors="orange",
         line_width=2,
@@ -55,29 +58,215 @@ class PolygonMap:
 
     headlines = []
 
-    def create_initial_polygons(self, layout_df, density=4):
+    def get_rough_topic(self, idx):
+        """Given an index of a rough point (given by rough voronoi
+        object, or the rough KDTree, get the topic ID for the
+        cell. Return -1 if no topic ID found (water)
+        """
+        return int(self.rough_points["topic"][idx])
+
+    def create_lake_points(self, points):
+        """
+        Given a pair of X,Y coordinate tuples that represent a straight
+        line segment, return a set of coordinates of a lake
+        meant to replace that segment
+        """
+        N_LAKE_PTS = 10
+        # Could get fancy with curved lakes here but we'll do the simple
+        # thing for now.
+        delta = (points[1] - points[0]) / N_LAKE_PTS
+        return [points[0] + i * delta for i in range(N_LAKE_PTS)]
+
+    def add_lakes(self):
+        """
+        Add lakes if required given the input graph
+        """
+        graph = nx.read_gpickle(getFile(name, Datafile.GRAPH_PICKLE))
+        # Basically, we want to examine each Voronoi ridge
+        # and if its corresponding edge doesn't exist in the input graph,
+        # then we "kill" it with a lake
+        extra_points = []
+        for i, pair in enumerate(self.rough_voronoi.ridge_points):
+            topicA = self.get_rough_topic(pair[0])
+            topicB = self.get_rough_topic(pair[1])
+            if topicA == -1 or topicB == -1:
+                # One of them is a water cell, so w/e
+                continue
+            if topicA == topicB:
+                # bordering yourself is OK
+                continue
+            if topicB in graph[topicA]:
+                # The edge exists in the graph, so it's OK.
+                continue
+            # If we reach this point, we have a Voronoi ridge
+            # that links two topics that SHOULD NOT have an edge
+            ridge_vertices = self.rough_voronoi.vertices[
+                self.rough_voronoi.ridge_vertices[i]
+            ]
+            extra_points.extend(self.create_lake_points(ridge_vertices))
+
+        self.set_rough_points(
+            self.rough_topic_points,
+            pd.concat(
+                (
+                    self.rough_points,
+                    pd.DataFrame(extra_points, columns=["x", "y"]),
+                ),
+                ignore_index=True,
+            ),
+        )
+
+        plt_voronoi(self.rough_points, self.topic_df)
+
+    def set_rough_points(self, topic_points, noise_points):
+        assert "x" in topic_points
+        assert "y" in topic_points
+        assert "topic" in topic_points
+        assert "x" in noise_points
+        assert "y" in noise_points
+        assert "topic" in noise_points
+        noise_points = noise_points.fillna(-1)
+
+        self.rough_points = pd.concat((topic_points, noise_points), ignore_index=True)
+        self.rough_voronoi = spatial.Voronoi(self.rough_points[["x", "y"]])
+        self.rough_kdtree = spatial.KDTree(self.rough_points[["x", "y"]])
+        self.topic_kdtree = spatial.KDTree(topic_points[["x", "y"]])
+        self.rough_topic_points = topic_points
+
+    def add_bridges(self):
+        """
+        Add land bridges if required given the input graph
+        """
+        graph = nx.read_gpickle(getFile(name, Datafile.GRAPH_PICKLE))
+        # Basically, we want to examine each edge in the input graph
+        # and try to see if there is an existing Voronoi ridge that
+        # satisfies it.
+        # If there isn't one, we look for a (water) Voronoi region
+        # that touches the two regions we want to connect
+        # and change its designation from water to land by adding it
+        # to self.rough_topic_pts df
+
+        dim = max(self.topic_df.index) + 1
+        ridge_adjacency = np.zeros((dim, dim))
+        for i, pair in enumerate(self.rough_voronoi.ridge_points):
+            topicA = self.get_rough_topic(pair[0])
+            topicB = self.get_rough_topic(pair[1])
+            if topicA != -1 and topicB != -1:
+                ridge_adjacency[topicA][topicB] = i
+                ridge_adjacency[topicB][topicA] = i
+
+        delaunay = spatial.Delaunay(self.rough_points)
+        neighbors = defaultdict(set)
+        for p in delaunay.simplices:
+            for v1, v2 in itertools.combinations(p, 2):
+                idx_i = self.get_rough_topic(v1)
+                idx_j = self.get_rough_topic(v2)
+                neighbors[v1].add(idx_j)
+                neighbors[v2].add(idx_i)
+
+        to_convert = []
+        for edge in list(graph.edges()):
+            # Check to see if there's already a border for this edge
+            if edge[0] == 61 and edge[1] == 67:
+                pdb.set_trace()
+            if edge[0] == 67 and edge[1] == 61:
+                pdb.set_trace()
+            if ridge_adjacency[edge[0]][edge[1]]:
+                continue
+            # We couldn't find one.
+            # Now, look for a V region that could link them.
+            for n_ in neighbors:
+                # topics is the set of neighboring topics of the voronoi polyon # N
+                neighboring_topics = neighbors[n_]
+                if edge[0] in neighboring_topics and edge[1] in neighboring_topics:
+                    if n_ < len(self.rough_topic_points) or n_ in to_convert:
+                        # Land polygon, we don't want to remove it (I think?)
+                        continue
+                    # TODO: choose source or target more intelligently
+                    print(f"Adding point {n_} to connect {edge[0]} and {edge[1]}")
+                    to_convert.append(n_)
+                    self.rough_points.at[n_, "topic"] = edge[0]
+                    break
+
+        new_topic_points = pd.concat(
+            (self.rough_topic_points, self.rough_points.iloc[to_convert]),
+            ignore_index=True,
+        )
+        pdb.set_trace()
+        mask = [
+            i >= len(self.rough_topic_points) and i not in to_convert
+            for i in range(len(self.rough_points))
+        ]
+        new_noise_points = self.rough_points.iloc[mask]
+
+        self.set_rough_points(new_topic_points, new_noise_points)
+
+        plt_voronoi(self.rough_points, self.topic_df)
+
+    @staticmethod
+    def get_sigmoid_circle(pts, c, c_r, spread=1.2):
+        """Return a sigmoid value"""
+        distances = np.linalg.norm(pts - c, axis=1)
+        # c_r marks the line where probability is 50%
+        # spread * c_r marks 73% probability 73%
+        slope = (1 / c_r + 1) / spread
+        return scipy.special.expit(distances * spread - c_r)
+
+    def create_initial_polygons(self, layout_df, density=2):
         # layout is a dict of x, y positions for each topic
+        self.topic_df = layout_df
+        self.n_topics = len(self.topic_df)
 
         mean_size = np.quantile(layout_df["radius"] ** 2 * 3.14, 0.25)
         # area is 1x1
         n = int(1 / mean_size * density)
 
-        pts = np.random.random((n, 2))
-        pts = self.improve_points(pts)
-        tree = spatial.KDTree(pts)
+        noise_pts = np.random.random((n, 2))
+        noise_pts = self.improve_points(noise_pts)
+        tree = spatial.KDTree(noise_pts)
+
+        # Remove points based on a series of probability distributions
+        # defined on circles for each group/continent
+        # As you get closer to the center of the circle, the probability of
+        # point removal is higher
+        remove_set = set()
+        # Calculate centers of each continent and distances of each
+        # region from continent center, this code might want to live somewhere else
+        centers = layout_df.groupby("group").mean()[["x", "y"]]
+        for g, center in centers.iterrows():
+            layout_df.loc[layout_df["group"] == g, "gx"] = center["x"]
+            layout_df.loc[layout_df["group"] == g, "gy"] = center["y"]
+        layout_df["gdist"] = (
+            (layout_df["x"] - layout_df["gx"]) ** 2
+            + (layout_df["y"] - layout_df["gy"]) ** 2
+        ) ** 0.5 + layout_df["radius"]
+        pts_to_test = tree.query_ball_point(
+            centers[["x", "y"]], layout_df.groupby("group").max()["gdist"]
+        )
+        for i, pts in enumerate(pts_to_test):
+            probs = self.get_sigmoid_circle(
+                noise_pts[pts],
+                np.array(centers.loc[i]),
+                np.array(layout_df.groupby("group").median()["gdist"]),
+            )
+            mask = (np.random.rand(len(probs)) < probs).astype(bool)
+            for idx, p in enumerate(pts):
+                if mask[idx]:
+                    remove_set.add(p)
+
         pts_to_remove = tree.query_ball_point(
             layout_df[["x", "y"]], layout_df["radius"]
         )
-        ptset = set()
         for p in pts_to_remove:
-            ptset.update(p)
-        pts = np.delete(pts, list(ptset), axis=0)
-        pt_df = pd.DataFrame(pts, columns=["x", "y"])
+            remove_set.update(p)
+        noise_pts = np.delete(noise_pts, list(remove_set), axis=0)
+        noise_df = pd.DataFrame(noise_pts, columns=["x", "y"])
+        noise_df["topic"] = -1
 
         # Generate extra points for each topic
         topic_points = []
         for i, row in layout_df.iterrows():
-            n_pts = int(row["radius"] ** 2 * 3.14 / mean_size * density)
+            n_pts = int(row["radius"] ** 2 * 3.14 / mean_size * density * 3)
             topic_points.append([row["x"], row["y"], i])
             for _ in range(n_pts):
                 theta = np.random.random() * 3.14 * 2
@@ -85,19 +274,12 @@ class PolygonMap:
                 x = row["x"] + np.cos(theta) * rad
                 y = row["y"] + np.sin(theta) * rad
                 topic_points.append([x, y, i])
-        topic_points_df = pd.DataFrame(topic_points, columns=["x", "y", "topic"])
+        rough_topic_points = pd.DataFrame(topic_points, columns=["x", "y", "topic"])
 
-        all_pts = pd.concat((topic_points_df, pt_df))[["x", "y"]]
-        voronoi = spatial.Voronoi(all_pts)
-        # plt_voronoi(all_pts, layout_df)
+        self.set_rough_points(rough_topic_points, noise_df)
 
-        self.n_topics = len(layout_df)
-        self.topic_df = layout_df
-        self.topic_points_df = topic_points_df
-        self.rough_voronoi = voronoi
-        self.rough_kdtree = spatial.KDTree(all_pts)
-        self.rough_vertices = voronoi.vertices
-        self.topic_kdtree = spatial.KDTree(topic_points_df[["x", "y"]])
+        self.add_lakes()
+        # self.add_bridges()
 
         """
         df = pd.DataFrame(voronoi.vertices, columns=["x", "y"])
@@ -130,17 +312,17 @@ class PolygonMap:
             pts = self.delaunay.points[simplex]
             pt = np.mean(pts, axis=0)
             _, tpt = self.rough_kdtree.query(pt)
-            if tpt >= len(self.topic_points_df):
+            topic = int(self.rough_points["topic"][tpt])
+            if topic == -1:
                 # water
                 self.elevation[i] = 0
             else:
-                topic = int(self.topic_points_df["topic"][tpt])
                 self.elevation[i] = self.topic_df["radius"][topic]
 
             try:
                 """
                 _, pt = self.topic_kdtree.query(pt)
-                topic = int(self.topic_points_df["topic"][pt])
+                topic = int(self.rough_topic_points["topic"][pt])
                 self.moisture[i] = self.topic_df["subjectivity"][topic]
                 self.temperature[i] = self.topic_df["media_diversity"][topic]
                 """
@@ -168,7 +350,7 @@ class PolygonMap:
                 pts = self.delaunay.points[simplex]
                 pt = np.mean(pts, axis=0)
                 dist, macroregion = self.topic_kdtree.query(pt)
-                topic = int(self.topic_points_df["topic"][macroregion])
+                topic = int(self.rough_topic_points["topic"][macroregion])
                 self.topics[i] = topic
             else:
                 self.topics[i] = -1
@@ -312,10 +494,10 @@ class PolygonMap:
             neighbor_heights = pd_heightmap[nonedge_neighbors]
             lowest_neighbor = nonedge_neighbors[np.argmin(neighbor_heights)]
             # Give the lowest neighbor this node's rainfall
-            flux_map[lowest_neighbor] += flux_map[node[0]]
+            self.flux_map[lowest_neighbor] += self.flux_map[node[0]]
 
         print("e r o d e")
-        for i, flux in enumerate(flux_map):
+        for i, flux in enumerate(self.flux_map):
             nonedge_neighbors = [n for n in self.delaunay.neighbors[node[0]] if n != -1]
             neighbor_slopes = np.abs(
                 pd_heightmap[nonedge_neighbors] - self.elevation[i]
@@ -323,9 +505,7 @@ class PolygonMap:
             slope = np.mean(neighbor_slopes)
             delta = np.min([flux ** 0.5 * slope / 100, 0.1])
             self.elevation[i] -= delta
-        self.normalize()
-
-        self.flux_map = flux_map
+        # self.normalize()
 
     def normalize(self):
         """
@@ -508,12 +688,13 @@ if __name__ == "__main__":
     m.create_initial_polygons(topic_df)
     m.initial_elevation()
     m.normalize()
-    m.round_hills()
     # m.smooth(n=3)
+    # m.round_hills()
     # m.erode()
     # m.reset_sea_level(quantile=0.8)
     # Km.smooth_coastline()
-    # m.smooth_coastline()
+    m.smooth_coastline()
+    m.smooth_coastline()
     m.assign_topics()
     # m.calculate_shadows()
     m.export()
