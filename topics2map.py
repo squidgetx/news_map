@@ -243,11 +243,13 @@ class PolygonMap:
         pts_to_test = tree.query_ball_point(
             centers[["x", "y"]], layout_df.groupby("group").max()["gdist"]
         )
+        medians = layout_df.groupby("group").median()["gdist"]
+
         for i, pts in enumerate(pts_to_test):
             probs = self.get_sigmoid_circle(
                 noise_pts[pts],
-                np.array(centers.loc[i]),
-                np.array(layout_df.groupby("group").median()["gdist"]),
+                np.array(centers.iloc[i]),
+                np.array(medians.iloc[i]),
             )
             mask = (np.random.rand(len(probs)) < probs).astype(bool)
             for idx, p in enumerate(pts):
@@ -415,6 +417,23 @@ class PolygonMap:
         for _ in range(n):
             vor = spatial.Voronoi(pts)
             newpts = []
+            for idx in range(len(vor.points)):
+                pt = vor.points[idx, :]
+                region = vor.regions[vor.point_region[idx]]
+                if -1 in region:
+                    newpts.append(pt)
+                else:
+                    vxs = np.asarray([vor.vertices[i, :] for i in region])
+                    vxs[vxs < 0] = 0
+                    vxs[vxs > 1] = 1
+                    newpt = np.mean(vxs, 0)
+                    newpts.append(newpt)
+            pts = np.asarray(newpts)
+        return pts
+        """
+        for _ in range(n):
+            vor = spatial.Voronoi(pts)
+            newpts = []
             for i, pt in enumerate(vor.points):
                 pt = pt.tolist()
                 region = vor.regions[i]
@@ -429,6 +448,7 @@ class PolygonMap:
                     newpts.append(newpt.tolist())
             pts = newpts
         return np.asarray(pts)
+        """
 
     def add_headline(self, headline, dominant_topic, x, y):
         # Add a headline with X, Y coordinate
@@ -633,6 +653,7 @@ if __name__ == "__main__":
         "-group",
         dest="group",
         type=int,
+        nargs="+",
         required=False,
         help="if provided, a group number to restrict to (useful for debugging)",
     )
@@ -663,7 +684,7 @@ if __name__ == "__main__":
     topic_df["group"] = layout_df["group"]
 
     if args.group is not None:
-        topic_df = topic_df[topic_df["group"] == args.group]
+        topic_df = topic_df[topic_df["group"].isin(args.group)]
 
     # topic_df = topic_df.reset_index()
     # Now, topic #s (except assigned at the end in export, are the col indexes)
