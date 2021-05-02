@@ -24,11 +24,14 @@ const smwidth = 1200;
 const smheight = 1200;
 
 let getRadius = function (node) {
+  if (node.hasOwnProperty("radius")) {
+    return node.radius;
+  }
   return Math.sqrt(node.size) * 2 + 2;
 };
 
 let getBasicSimulation = function (nodes, links) {
-  return (simulation = d3
+  return d3
     .forceSimulation(nodes)
     .force(
       "link",
@@ -39,7 +42,7 @@ let getBasicSimulation = function (nodes, links) {
         .iterations(2)
         .strength((d) => 2 / d.weight)
     )
-    .force("charge", d3.forceManyBody().strength(-1200)));
+    .force("charge", d3.forceManyBody().strength(-1200));
 };
 
 let forceLayoutPreserveCollide = function (
@@ -307,7 +310,7 @@ let write_layout = function (layout, name, width, height) {
   const nodeCircles = node
     .join("circle")
     .attr("r", getRadius)
-    .attr("fill", (d) => nodeColor[d.type]);
+    .attr("fill", (d) => nodeColor[d.type] || "coral");
   const nodelabels = node
     .join("text")
     .attr("style", "color: #aaa;")
@@ -338,6 +341,96 @@ let write_layout = function (layout, name, width, height) {
       }
     }
   );
+};
+
+let mmc_force_layout_2 = function (
+  metametaclusters,
+  iterations,
+  width,
+  height
+) {
+  console.log("begin fl2");
+  let mmc_nodes = metametaclusters["nodes"];
+  let mmc_links = metametaclusters["edges"];
+  let nodeLookup = {};
+  for (const n of mmc_nodes) {
+    nodeLookup[n.id] = n;
+  }
+  let linkLookup = {};
+  for (const li in mmc_links) {
+    let l = mmc_links[li];
+    let r1 = getRadius(nodeLookup[l.source]);
+    let r2 = getRadius(nodeLookup[l.target]);
+    if (l.source in linkLookup) {
+      linkLookup[l.source].add(l.target);
+    } else {
+      linkLookup[l.source] = new Set();
+      linkLookup[l.source].add(l.target);
+    }
+    if (l.target in linkLookup) {
+      linkLookup[l.target].add(l.source);
+    } else {
+      linkLookup[l.target] = new Set();
+      linkLookup[l.target].add(l.source);
+    }
+    l.distance = r1 + r2;
+  }
+
+  for (const n of mmc_nodes) {
+    if (!(n.id in linkLookup)) {
+      // start at a random point really far away
+      n.x = width / 2 + Math.random() * 1000 - 500;
+      n.y = height / 2 + Math.random() * 1000 - 500;
+    } else {
+      degree = linkLookup[n.id].size;
+      n.x = width / 2 + (Math.random() * 1000 - 500); // degree;
+      n.y = height / 2 + (Math.random() * 1000 - 500); // degree;
+    }
+  }
+  console.log(JSON.stringify(mmc_links));
+  console.log("begin sim", iterations);
+  let simulation = d3
+    .forceSimulation(mmc_nodes)
+    .force(
+      "link",
+      d3
+        .forceLink(mmc_links)
+        .id((d) => d.id)
+        .distance((d) => d.distance / 2)
+        .strength((d) => 1 / (d.weight + 1))
+      //.iterations(2)
+    )
+    .force(
+      "charge",
+      d3.forceManyBody().strength((d) => -2000)
+    );
+
+  for (let i = 0; i < iterations / 2; i++) {
+    console.log("ticking", i);
+    simulation.tick();
+  }
+  console.log("begin sim 2");
+  simulation = simulation.force(
+    "collision",
+    d3.forceCollide().radius(getRadius)
+  );
+  for (let i = 0; i < iterations / 2; i++) {
+    simulation.tick();
+  }
+  let layout = {
+    nodes: Object.fromEntries(mmc_nodes.map((n) => [n.id, n])),
+    links: mmc_links,
+  };
+  console.log("write layout");
+  write_layout(layout, "mmc2", width, height);
+  for (let n of mmc_nodes) {
+    if (isNaN(n.x)) {
+      console.log(
+        `${n.id} is NaN! radius is ${getRadius(n)} ${JSON.stringify(n)}`
+      );
+    }
+  }
+  return mmc_nodes;
 };
 
 let mmc_force_layout = function (metametaclusters) {
@@ -439,8 +532,13 @@ let apply_centers = function (layouts, centers) {
     let centroid = getCentroid(nodes);
     let center = centers[i];
     for (node of nodes) {
-      node.x += center.x - centroid.x;
-      node.y += center.y - centroid.y;
+      if (isNaN(node.x) || isNaN(node.y)) {
+        node.x = center.x;
+        node.y = center.y;
+      } else {
+        node.x += center.x - centroid.x;
+        node.y += center.y - centroid.y;
+      }
     }
   }
   return layouts;
@@ -479,6 +577,7 @@ let layouts = [];
 console.log(metaclusters.length);
 all_edges = [];
 node_lookup = [];
+distances = [];
 for (let metacluster of metaclusters) {
   let nodes = layoutCluster(
     metacluster["nodes"],
@@ -494,6 +593,19 @@ for (let metacluster of metaclusters) {
   for (n of nodes) {
     node_lookup[n.id] = n;
   }
+  let centroid = getCentroid(nodes);
+  let dist = nodes.map(
+    (n) =>
+      Math.sqrt(
+        (n.x - centroid.x) * (n.x - centroid.x) +
+          (n.y - centroid.y) * (n.y - centroid.y)
+      ) + getRadius(n)
+  );
+  distances.push(d3.max(dist));
+}
+
+for (n in metametaclusters["nodes"]) {
+  metametaclusters["nodes"][n].radius = distances[n];
 }
 
 let mmc_centers;
@@ -502,10 +614,12 @@ if (args.grid) {
   layouts = apply_centers(layouts, mmc_centers);
   iterations = 0;
 } else {
-  mmc_centers = mmc_force_layout(metametaclusters);
+  mmc_centers = mmc_force_layout_2(metametaclusters, 1000, 9600, 9600);
   layouts = apply_centers(layouts, mmc_centers);
+  iterations = 0;
 }
 
+/*
 // Reset nodes
 let all_nodes = layouts.flat();
 all_nodes.forEach((n) => {
@@ -527,6 +641,7 @@ for (let i = 0; i < layouts.length; i++) {
   let centroid = getCentroid(layouts[i]);
   mmc_centers[i] = centroid; //[centroid.x, centroid.y];
 }
+*/
 
 fs.writeFile(
   `data/${name}.layout.json`,

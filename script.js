@@ -34,7 +34,7 @@ function drawMaster() {
     topics = topicData;
     topicSizes = [];
     for (k in topics) {
-      topicSizes[k] = topics[k]["total"];
+      topicSizes[k] = topics[k]["size"];
       topicMediaNames[k] = []; //topics[k]["_metadata_"]["media_names"];
     }
 
@@ -356,7 +356,7 @@ let renderDebugContent = function (topic_id) {
 
   document.getElementById(
     "wordContainer"
-  ).innerHTML += `<p>Size: ${topics[topic_id].total}</p>`;
+  ).innerHTML += `<p>Size: ${topics[topic_id].size}</p>`;
   document.getElementById(
     "wordContainer"
   ).innerHTML += `<p>Temperature/Mean Subjectivity: ${r.temperature}</p>`;
@@ -505,7 +505,7 @@ function drawLDAVis() {
   };
 
   let tsvname = getName(date, interval, "mds.tsv");
-  d3.tsv(tsvname).then((data) => {
+  d3.tsv(tsvname).then((data) => 
     distance_data = data.map((d) => {
       return {
         x: parseFloat(d[0]),

@@ -22,7 +22,6 @@ from names import getFile, Datafile
 import pdb
 
 
-"""
 def get_distances(graphs, distances):
     cg_distances = np.zeros((len(graphs), len(graphs)))
     for i, cg1 in enumerate(graphs):
@@ -84,9 +83,9 @@ def get_edges(graph, components, topic_distances):
                 assert sum(distances_ndarray[node]) == len(distances_ndarray) - 1
                 graph.remove_node(node)
                 unconnected_nodes.append(node)
+    graph.add_nodes_from(unconnected_nodes)
 
     return graph
-"""
 
 
 def build_graph(df, sizes: dict):
@@ -378,6 +377,7 @@ def layout_graph(
     # then, we can just iterate through the cut edges
     mmc_graph = nx.Graph()
     mmc_graph.add_nodes_from([i for i in range(len(compgraphs))])
+
     for edge in edges:
         # always go small -> large
         c1 = min(node_lookup[edge["source"]], node_lookup[edge["target"]])
@@ -387,7 +387,7 @@ def layout_graph(
         else:
             mmc_graph.add_edge(c1, c2, weight=10)
 
-    # mmc_graph = get_edges(mmc_graph, compgraphs, distances)
+    mmc_graph = get_edges(mmc_graph, compgraphs, distances)
     if initPositions:
         for i, graph in enumerate(compgraphs):
             cluster_centers = [

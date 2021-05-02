@@ -30,8 +30,10 @@ def get_radius(n):
 
 
 def plt_voronoi(pts, topics):
+    if isinstance(pts, pd.DataFrame):
+        pts = pts[["x", "y"]]
     fig = spatial.voronoi_plot_2d(
-        spatial.Voronoi(pts[["x", "y"]]),
+        spatial.Voronoi(pts),
         show_vertices=False,
         line_colors="orange",
         line_width=2,
@@ -64,6 +66,82 @@ class PolygonMap:
         cell. Return -1 if no topic ID found (water)
         """
         return int(self.rough_points["topic"][idx])
+
+    def create_initial_polygons(self, layout_df, density=2000, land_density=5000):
+        """
+        Given a set of initial topics, create the "rough" voronoi skeleton
+        for the map.
+
+        The density parameter controls roughly how fine grained this skeleton is.
+        A higher parameter leads to more points
+        """
+        # layout is a dict of x, y positions for each topic
+        self.topic_df = layout_df
+        self.n_topics = len(self.topic_df)
+
+        # First, calculate centers of each continent and the distances of each
+        # region from continent center along with the max and median distance
+        centers = layout_df.groupby("group").mean()[["x", "y"]]
+        for g, center in centers.iterrows():
+            layout_df.loc[layout_df["group"] == g, "gx"] = center["x"]
+            layout_df.loc[layout_df["group"] == g, "gy"] = center["y"]
+        layout_df["gdist"] = (
+            (layout_df["x"] - layout_df["gx"]) ** 2
+            + (layout_df["y"] - layout_df["gy"]) ** 2
+        ) ** 0.5 + layout_df["radius"]
+
+        max_dist = layout_df.groupby("group").max()["gdist"]
+        medians = layout_df.groupby("group").median()["gdist"]
+
+        # Second, spawn points basically in a ring around each continent.
+        # Use a gaussian distribution so that there are the most points along the
+        # outermost edge of the map, and fewer as we go inland. This
+        # guarantees that the continent will be properly surrounded by water
+        # while reducing the number of lakes that form inside (while still allowing) some
+
+        noise_pts = np.ndarray((0, 2))
+        for g, center in centers.iterrows():
+            n_pts = int(max_dist.loc[g] ** 2 * np.pi * density)
+            theta = np.random.random(n_pts) * np.pi * 2
+            radius = np.random.normal(
+                loc=max_dist.loc[g], scale=medians.loc[g] / 2, size=n_pts
+            )
+            x, y = (
+                radius * np.cos(theta) + center["x"],
+                radius * np.sin(theta) + center["y"],
+            )
+            noise_pts = np.concatenate((noise_pts, np.stack((x, y), axis=1)))
+        plt_voronoi(noise_pts, layout_df)
+
+        # Third, remove any noise points that directly lie inside of a region's
+        # circular range.
+        tree = spatial.KDTree(noise_pts)
+        pts_to_remove = tree.query_ball_point(
+            layout_df[["x", "y"]], layout_df["radius"]
+        )
+        remove_set = set()
+        for p in pts_to_remove:
+            remove_set.update(p)
+        noise_pts = np.delete(noise_pts, list(remove_set), axis=0)
+        noise_df = pd.DataFrame(noise_pts, columns=["x", "y"])
+        noise_df["topic"] = -1
+
+        # Fourth, generate extra points for each region/topic. This guarantees
+        # that the region will have a land area closer to its given radius
+        topic_points = []
+        for i, row in layout_df.iterrows():
+            n_pts = int(row["radius"] ** 2 * np.pi * land_density)
+            topic_points.append([row["x"], row["y"], i])
+            for _ in range(n_pts):
+                theta = np.random.random() * 3.14 * 2
+                rad = np.random.random() * row["radius"]
+                x = row["x"] + np.cos(theta) * rad
+                y = row["y"] + np.sin(theta) * rad
+                topic_points.append([x, y, i])
+        rough_topic_points = pd.DataFrame(topic_points, columns=["x", "y", "topic"])
+
+        self.set_rough_points(rough_topic_points, noise_df)
+        self.add_lakes()
 
     def create_lake_points(self, points):
         """
@@ -118,25 +196,23 @@ class PolygonMap:
 
         plt_voronoi(self.rough_points, self.topic_df)
 
-    def set_rough_points(self, topic_points, noise_points):
+    def set_rough_points(self, topic_points, noise_pts):
         assert "x" in topic_points
         assert "y" in topic_points
         assert "topic" in topic_points
-        assert "x" in noise_points
-        assert "y" in noise_points
-        assert "topic" in noise_points
-        noise_points = noise_points.fillna(-1)
+        assert "x" in noise_pts
+        assert "y" in noise_pts
+        assert "topic" in noise_pts
+        noise_pts = noise_pts.fillna(-1)
 
-        self.rough_points = pd.concat((topic_points, noise_points), ignore_index=True)
+        self.rough_points = pd.concat((topic_points, noise_pts), ignore_index=True)
         self.rough_voronoi = spatial.Voronoi(self.rough_points[["x", "y"]])
         self.rough_kdtree = spatial.KDTree(self.rough_points[["x", "y"]])
         self.topic_kdtree = spatial.KDTree(topic_points[["x", "y"]])
         self.rough_topic_points = topic_points
 
+    """
     def add_bridges(self):
-        """
-        Add land bridges if required given the input graph
-        """
         graph = nx.read_gpickle(getFile(name, Datafile.GRAPH_PICKLE))
         # Basically, we want to examine each edge in the input graph
         # and try to see if there is an existing Voronoi ridge that
@@ -197,116 +273,12 @@ class PolygonMap:
             i >= len(self.rough_topic_points) and i not in to_convert
             for i in range(len(self.rough_points))
         ]
-        new_noise_points = self.rough_points.iloc[mask]
+        new_noise_pts = self.rough_points.iloc[mask]
 
-        self.set_rough_points(new_topic_points, new_noise_points)
+        self.set_rough_points(new_topic_points, new_noise_pts)
 
         plt_voronoi(self.rough_points, self.topic_df)
-
-    @staticmethod
-    def get_sigmoid_circle(pts, c, c_r, spread=1.2):
-        """Return a sigmoid value"""
-        distances = np.linalg.norm(pts - c, axis=1)
-        # c_r marks the line where probability is 50%
-        # spread * c_r marks 73% probability 73%
-        slope = (1 / c_r + 1) / spread
-        return scipy.special.expit(distances * spread - c_r)
-
-    def create_initial_polygons(self, layout_df, density=2):
-        # layout is a dict of x, y positions for each topic
-        self.topic_df = layout_df
-        self.n_topics = len(self.topic_df)
-
-        mean_size = np.quantile(layout_df["radius"] ** 2 * 3.14, 0.25)
-        # area is 1x1
-        n = int(1 / mean_size * density)
-
-        noise_pts = np.random.random((n, 2))
-        noise_pts = self.improve_points(noise_pts)
-        tree = spatial.KDTree(noise_pts)
-
-        # Remove points based on a series of probability distributions
-        # defined on circles for each group/continent
-        # As you get closer to the center of the circle, the probability of
-        # point removal is higher
-        remove_set = set()
-        # Calculate centers of each continent and distances of each
-        # region from continent center, this code might want to live somewhere else
-        centers = layout_df.groupby("group").mean()[["x", "y"]]
-        for g, center in centers.iterrows():
-            layout_df.loc[layout_df["group"] == g, "gx"] = center["x"]
-            layout_df.loc[layout_df["group"] == g, "gy"] = center["y"]
-        layout_df["gdist"] = (
-            (layout_df["x"] - layout_df["gx"]) ** 2
-            + (layout_df["y"] - layout_df["gy"]) ** 2
-        ) ** 0.5 + layout_df["radius"]
-        pts_to_test = tree.query_ball_point(
-            centers[["x", "y"]], layout_df.groupby("group").max()["gdist"]
-        )
-        medians = layout_df.groupby("group").median()["gdist"]
-
-        for i, pts in enumerate(pts_to_test):
-            probs = self.get_sigmoid_circle(
-                noise_pts[pts],
-                np.array(centers.iloc[i]),
-                np.array(medians.iloc[i]),
-            )
-            mask = (np.random.rand(len(probs)) < probs).astype(bool)
-            for idx, p in enumerate(pts):
-                if mask[idx]:
-                    remove_set.add(p)
-
-        pts_to_remove = tree.query_ball_point(
-            layout_df[["x", "y"]], layout_df["radius"]
-        )
-        for p in pts_to_remove:
-            remove_set.update(p)
-        noise_pts = np.delete(noise_pts, list(remove_set), axis=0)
-        noise_df = pd.DataFrame(noise_pts, columns=["x", "y"])
-        noise_df["topic"] = -1
-
-        # Generate extra points for each topic
-        topic_points = []
-        for i, row in layout_df.iterrows():
-            n_pts = int(row["radius"] ** 2 * 3.14 / mean_size * density * 3)
-            topic_points.append([row["x"], row["y"], i])
-            for _ in range(n_pts):
-                theta = np.random.random() * 3.14 * 2
-                rad = np.random.random() * row["radius"]
-                x = row["x"] + np.cos(theta) * rad
-                y = row["y"] + np.sin(theta) * rad
-                topic_points.append([x, y, i])
-        rough_topic_points = pd.DataFrame(topic_points, columns=["x", "y", "topic"])
-
-        self.set_rough_points(rough_topic_points, noise_df)
-
-        self.add_lakes()
-        # self.add_bridges()
-
-        """
-        df = pd.DataFrame(voronoi.vertices, columns=["x", "y"])
-        # df.to_csv(getFile(self.name, Datafile.VERTICES_TSV), sep="\t")
-
-        df = pd.DataFrame()
-        # df["coordinates"] = self.vor.regions
-        df["coordinates"] = [json.dumps(row) for row in voronoi.regions]
-        topics = np.zeros(len(voronoi.regions))
-        for i, j in enumerate(voronoi.point_region):
-            if i < len(topic_df):
-                topics[j] = i
-            else:
-                topics[j] = -1
-        df["topic"] = topics
-
-        elevation = []
-        for i in topics:
-            if i == -1:
-                elevation.append(0)
-            else:
-                elevation.append(topic_df["size"][i])
-        # df["elevation"] = np.array(elevation) / np.max(elevation)
-        # df.to_csv(getFile(self.name, Datafile.REGIONS_TSV), sep="\t")
-        """
+    """
 
     def initial_elevation(self):
         # Assign topics to each hi-resolution polygon
