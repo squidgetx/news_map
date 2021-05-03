@@ -3,6 +3,7 @@
 // Original idea and framework borrowed from https://gist.github.com/mef/7044786
 
 const d3 = require("d3"),
+  d3_force = require("./d3-force"),
   jsdom = require("jsdom"),
   fs = require("fs"),
   assert = require("assert"),
@@ -87,6 +88,56 @@ let forceLayoutPreserveCollide = function (
   );
 
   for (let i = 0; i < iterations; i++) {
+    simulation.tick();
+  }
+  return {
+    nodes: Object.fromEntries(nodes.map((n) => [n.id, n])),
+    links: filtered_links,
+  };
+};
+
+let forceLayoutTerrible = function (nodes, links, iterations, width, height) {
+  // Return an object with node.id => node
+  // Strip out links that dont point to any node
+  let nodeLookup = {};
+  for (const n of nodes) {
+    nodeLookup[n.id] = n;
+  }
+  let filtered_links = links.filter(
+    (l) => l.source in nodeLookup && l.target in nodeLookup
+  );
+  let flstr = JSON.stringify(filtered_links);
+  filtered_links = JSON.parse(flstr);
+
+  for (const li in filtered_links) {
+    let l = filtered_links[li];
+    let r1 = getRadius(nodeLookup[l.source]);
+    let r2 = getRadius(nodeLookup[l.target]);
+
+    // figure out optimal distance:
+    // if weight is closer to 1, distance should be r1+r2
+    // if weight closer to 0, distance should be... further?
+    l.distance = (r1 + r2) / 2;
+  }
+  /*
+  console.log(
+    `Laying out ${nodes.length} nodes and ${links.length} links, with ${filtered_links.length} filtered links`
+  );
+  */
+
+  let simulation = d3
+    .forceSimulation(nodes)
+    .force(
+      "link",
+      d3
+        .forceLink(filtered_links)
+        .id((d) => d.id)
+        .strength((d) => 0.01 / d.weight)
+    )
+    .force("charge", d3.forceManyBody().strength(-256))
+    .force("center", d3.forceCenter(width / 2, height / 2));
+
+  for (let i = 0; i < iterations / 2; i++) {
     simulation.tick();
   }
   return {
@@ -297,11 +348,9 @@ let write_layout = function (layout, name, width, height) {
     .selectAll("line")
     .data(links);
 
-  const linklines = link.join("line").attr("stroke-width", 4);
-  const linklabels = link
-    .join("text")
-    .attr("class", "linklabel")
-    .html((d) => `${d.weight.toFixed(2)}, ${d.distance.toFixed(2)}`);
+  const linklines = link.join("line").attr("stroke-width", 1);
+  const linklabels = link.join("text").attr("class", "linklabel");
+  //.html((d) => `${d.weight.toFixed(2)}, ${d.distance.toFixed(2)}`);
   let nodeColor = {
     core: "coral",
     leaf: "cadetblue",
@@ -311,10 +360,8 @@ let write_layout = function (layout, name, width, height) {
     .join("circle")
     .attr("r", getRadius)
     .attr("fill", (d) => nodeColor[d.type] || "coral");
-  const nodelabels = node
-    .join("text")
-    .attr("style", "color: #aaa;")
-    .html((d) => `${d.id}, ${Math.floor(d.size)}, ${Math.floor(getRadius(d))}`);
+  const nodelabels = node.join("text").attr("style", "color: #aaa;");
+  //.html((d) => `${d.id}, ${Math.floor(d.size)}, ${Math.floor(getRadius(d))}`);
 
   nodeCircles.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
   nodelabels.attr("x", (d) => d.x + 10).attr("y", (d) => d.y - 10);
@@ -343,6 +390,81 @@ let write_layout = function (layout, name, width, height) {
   );
 };
 
+let mmc_force_layout_friction = function (
+  metametaclusters,
+  iterations,
+  width,
+  height
+) {
+  console.log("begin fl2");
+  let mmc_nodes = metametaclusters["nodes"];
+  let mmc_links = metametaclusters["edges"];
+  let nodeLookup = {};
+  for (const n of mmc_nodes) {
+    nodeLookup[n.id] = n;
+    n.sx = n.x;
+    n.sy = n.y;
+  }
+  for (const li in mmc_links) {
+    let l = mmc_links[li];
+    let r1 = getRadius(nodeLookup[l.source]);
+    let r2 = getRadius(nodeLookup[l.target]);
+    l.distance = r1 + r2;
+  }
+
+  console.log("begin sim", iterations);
+  console.log(JSON.stringify(mmc_nodes[0]));
+  let simulation = d3
+    .forceSimulation(mmc_nodes)
+    .force(
+      "link",
+      d3
+        .forceLink(mmc_links)
+        .id((d) => d.id)
+        .distance((d) => d.distance / 4)
+        .strength((d) => 1 / (d.weight + 1))
+    )
+    .force(
+      "charge",
+      d3.forceManyBody().strength((d) => -500)
+    )
+    .force(
+      "radial",
+      d3
+        .forceRadial(
+          1,
+          (d) => d.sx,
+          (d) => d.sy
+        )
+        .strength(0.9)
+    );
+
+  for (let i = 0; i < iterations / 2; i++) {
+    simulation.tick();
+  }
+  console.log("begin sim 2");
+  simulation = simulation.force(
+    "collision",
+    d3.forceCollide().radius(getRadius)
+  );
+  for (let i = 0; i < iterations / 2; i++) {
+    simulation.tick();
+  }
+  let layout = {
+    nodes: Object.fromEntries(mmc_nodes.map((n) => [n.id, n])),
+    links: mmc_links,
+  };
+  console.log("write layout");
+  write_layout(layout, "mmc2", width, height);
+  for (let n of mmc_nodes) {
+    if (isNaN(n.x)) {
+      console.log(
+        `${n.id} is NaN! radius is ${getRadius(n)} ${JSON.stringify(n)}`
+      );
+    }
+  }
+  return mmc_nodes;
+};
 let mmc_force_layout_2 = function (
   metametaclusters,
   iterations,
@@ -377,14 +499,10 @@ let mmc_force_layout_2 = function (
   }
 
   for (const n of mmc_nodes) {
-    if (!(n.id in linkLookup)) {
+    if (!n.hasOwnProperty("x")) {
       // start at a random point really far away
       n.x = width / 2 + Math.random() * 1000 - 500;
       n.y = height / 2 + Math.random() * 1000 - 500;
-    } else {
-      degree = linkLookup[n.id].size;
-      n.x = width / 2 + (Math.random() * 1000 - 500); // degree;
-      n.y = height / 2 + (Math.random() * 1000 - 500); // degree;
     }
   }
   console.log(JSON.stringify(mmc_links));
@@ -396,7 +514,7 @@ let mmc_force_layout_2 = function (
       d3
         .forceLink(mmc_links)
         .id((d) => d.id)
-        .distance((d) => d.distance / 2)
+        .distance((d) => d.distance / 4)
         .strength((d) => 1 / (d.weight + 1))
       //.iterations(2)
     )
@@ -406,7 +524,6 @@ let mmc_force_layout_2 = function (
     );
 
   for (let i = 0; i < iterations / 2; i++) {
-    console.log("ticking", i);
     simulation.tick();
   }
   console.log("begin sim 2");
@@ -509,7 +626,7 @@ let mmc_grid_layout = function (metametaclusters) {
   let mmc_nodes = metametaclusters["nodes"];
   let centers = [];
   let GRID = 700;
-  const WIDTH = 9600;
+  const WIDTH = 3600;
   let x = GRID / 2;
   let y = GRID / 2;
   for (let i = 0; i < mmc_nodes.length; i++) {
@@ -588,6 +705,7 @@ for (let metacluster of metaclusters) {
     smheight,
     1
   );
+
   all_edges = all_edges.concat(metacluster["edges"]);
   layouts.push(nodes);
   for (n of nodes) {
@@ -614,18 +732,20 @@ if (args.grid) {
   layouts = apply_centers(layouts, mmc_centers);
   iterations = 0;
 } else {
-  mmc_centers = mmc_force_layout_2(metametaclusters, 1000, 9600, 9600);
+  //mmc_centers = mmc_force_layout_2(metametaclusters, 1000, 9600, 9600);
+  mmc_centers = mmc_force_layout_friction(metametaclusters, 100, 9600, 9600);
   layouts = apply_centers(layouts, mmc_centers);
   iterations = 0;
 }
-
-/*
-// Reset nodes
-let all_nodes = layouts.flat();
-all_nodes.forEach((n) => {
+layouts.flat().forEach((n) => {
   delete n.fx;
   delete n.fy;
 });
+let dummyLayout = forceLayout(layouts.flat(), all_edges, 0, 9600, 9600);
+write_layout(dummyLayout, "all", 9600, 9600);
+/*
+// Reset nodes
+
 
 //big_edges.forEach((n) => (n.weight = 5));
 all_edges = all_edges.concat(big_edges);

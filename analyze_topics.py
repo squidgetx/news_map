@@ -1,5 +1,6 @@
 # Python script to take an input corpus and output topics
 import random
+import util
 import tracery
 from tracery.modifiers import base_english
 
@@ -35,36 +36,43 @@ def rank(arr, val):
     return arr[int(val * len(arr))]
 
 
-land_names = [
-    "archipelago",
-    # "peninsula",
-    "badlands",
-    "bayou",
-    "beach",
-    "bluff",
-    "canyon",
+PENINSULA = [
+    "point",
+    "outcrop",
     "cape",
-    "cirque",
-    "col",
+    "beach",
+    "promontory",
+    "peninsula",
+]
+
+LAND_NAMES = [
+    "knoll",
+    "hill",
+    "bluff",
+    "bayou",
     "desert",
     "flat",
-    "fields",
-    "meadows",
-    "plains",
-    "dunes",
-    "glacier",
+    "field",
+    "meadow",
+    "plain",
+    "grassland",
+    "dune",
     "glen",
-    "gorges",
-    "hills",
-    "knoll",
     "marsh",
     "swamp",
-    "plateau",
-    "grassland",
-    "mountain",
-    "peaks",
+    "badland",
     "tundra",
+    "plateau",
+    "gorge",
+    "glacier",
+    "expanse",
+    "wasteland",
+    "canyons",
+    "mountain",
+    "peak",
 ]
+
+ISLANDS = ["islet", "isle", "island", "mini-Continent"]
 
 
 def score_sentiment(sentence):
@@ -76,11 +84,13 @@ def score_sentiment(sentence):
 
 def get_degrees(name, topics_json):
     # Maybe this code should live in cluster_topics?
-    compgraphs = names.readJSON(name, Datafile.METACLUSTERS)
-    for cg in compgraphs:
-        for node in cg["nodes"]:
-            if node["id"] in topics_json:
-                topics_json[node["id"]]["degree"] = node["degree"]
+
+    graph = nx.read_gpickle(getFile(name, Datafile.GRAPH_PICKLE))
+    for topic in topics_json:
+        try:
+            topics_json[topic]["degree"] = graph.degree[topic]
+        except:
+            pdb.set_trace()
     return topics_json
 
 
@@ -100,12 +110,29 @@ def get_name(topics_json, topic):
     # Only use one if it's a triple
 
     # Multiplex by node degree, elevation, and alliteration
+    if topics_json[topic]["degree"] == 0:
+        land_names = ISLANDS
+    elif topics_json[topic]["degree"] == 1:
+        land_names = PENINSULA
+    else:
+        land_names = LAND_NAMES
+    land_names = [w.capitalize() for w in land_names]
+    size = util.scale(topics_json[topic]["size"], 0, 4000, 0, 1, use_clamp=True)
+
+    words = ["#w# #r#", "#r# #w#", "#r#-#w#", "#w#-#r#", "#w#", "#r#"]
+    if top_cw == top_rw:
+        words = ["#w#"]
+    elif set(top_cw).issubset(set(top_rw)) or len(top_rw) >= 3:
+        words = ["#r#"]
+    elif set(top_rw).issubset(set(top_cw)) or len(top_cw) >= 3:
+        words = ["#w#"]
     rules = {
         "origin": ["#land# of #words#", "#words# #land#"],
-        "words": ["#w# #r#", "#r# #w#", "#r#-#w#", "#w#-#r#", "#w#", "#r#"],
+        "words": words,
         "r": " ".join([w.capitalize() for w in top_cw]),
         "w": " ".join([w.capitalize() for w in top_rw]),
-        "land": [w.capitalize() for w in land_names],
+        "land": ["#l#", "#l#s"],
+        "l": util.rank(land_names, size),
     }
     grammar = tracery.Grammar(rules)
     grammar.add_modifiers(base_english)
@@ -122,10 +149,9 @@ def get_word_relevance(name, topics_json):
         [dictionary.cfs[token] / dictionary.num_pos for token in dictionary.keys()]
     )
     for topic, row in enumerate(topic_ndarray):
-        sum_topic = np.sum(row)
-        if sum_topic == 0:
-            # This topic is empty lol
+        if topic not in topics_json:
             continue
+        sum_topic = np.sum(row)
         topic_word_relevance = (
             row / sum_topic * LAMBDA + (1 - LAMBDA) * row / sum_topic / ps_token_corpus
         )

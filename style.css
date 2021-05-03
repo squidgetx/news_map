@@ -83,6 +83,7 @@ path.selected {
   position: absolute;
   top: 0;
   left: 400px;
+  background-color: #85b8f5;
 }
 
 .month {
@@ -106,5 +107,12 @@ path.selected {
   background-color: rgba(255, 255, 255, 0.5);
   position: absolute;
   right: 0;
-  bottom: 0;
+  top: 0;
+}
+
+#mapControls {
+  position: fixed;
+  right: 0;
+  bottom: 40;
+  z-index: 10;
 }

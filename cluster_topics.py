@@ -74,7 +74,7 @@ def get_edges(graph, components, topic_distances):
                     score = val
                     candidate_idx = (node, i)
         if candidate_idx:
-            print(f"Placing edge {candidate_idx}")
+            # print(f"Placing edge {candidate_idx}")
             graph.add_edge(candidate_idx[0], candidate_idx[1], weight=val)
         else:
             # Did not find any candidates. This means this node literally
@@ -88,7 +88,7 @@ def get_edges(graph, components, topic_distances):
     return graph
 
 
-def build_graph(df, sizes: dict):
+def build_graph(df, sizes: dict, terrible=False):
     """
     Given distance DF and list of valid topic indexes,
     build initial graph with weighted edges
@@ -107,13 +107,13 @@ def build_graph(df, sizes: dict):
                 continue
             distance = df[topic_a][topic_b]
             assert distance > 0
-            if distance < 0.75:
+            if terrible or distance < 0.75:
                 graph.add_edge(topic_a, topic_b, weight=distance)
 
     return graph
 
 
-def build_and_save_graph(name, prevname=None):
+def build_and_save_graph(name, prevname=None, terrible=False):
 
     df = pd.read_csv(getFile(name, Datafile.DISTANCE_JS), sep="\t", index_col=0)
     df.columns = df.columns.astype(int)
@@ -122,7 +122,7 @@ def build_and_save_graph(name, prevname=None):
     sizes = names.getTopicSizes(name)
     topics = list(sizes.keys())
 
-    graph = build_graph(df, sizes)
+    graph = build_graph(df, sizes, terrible=terrible)
 
     if prevname:
         prevLayout = {}
@@ -157,9 +157,9 @@ def build_and_save_graph(name, prevname=None):
         )
 
     else:
-        layout_graph(graph, df, name)
+        layout_graph(graph, df, name, terrible=terrible)
         util.run_subprocess(
-            ["node", "layout.js", "-n", f"{name}", "-i", "1000", "--grid"],
+            ["node", "layout.js", "-n", f"{name}", "-i", "1000"],
         )
 
 
@@ -195,6 +195,8 @@ def layout_graph_with_predecessor(
     initial = {}
     for topic in range(len(distances)):
         # figure out which topic is closest
+        if topic not in graph:
+            continue
         prevTopic, distance = get_topic(interDistances, topic)
         if prevTopic == None:
             print(f"{topic} distance was None !!!")
@@ -212,9 +214,9 @@ def layout_graph_with_predecessor(
     # we need to double check the intertopic JS distance code
     # :(
     # ...
-    topics = json.load(open(getFile(name, Datafile.TOPIC_JSON)))
-    prevname = "us_mainstream_stories_trunc_2020-02-01_2020-02-29"
-    ptopics = json.load(open(getFile(prevname, Datafile.TOPIC_JSON)))
+    # Kjjitopics = json.load(open(getFile(name, Datafile.TOPIC_JSON)))
+    # prevname = "us_mainstream_stories_trunc_2020-02-01_2020-02-29"
+    # ptopics = json.load(open(getFile(prevname, Datafile.TOPIC_JSON)))
     layout_graph(graph, distances, name, initial, prevLayout, microIter=16, macroIter=4)
 
 
@@ -336,20 +338,27 @@ def layout_graph(
     prevLayout=None,
     microIter=50,
     macroIter=70,
+    terrible=False,
 ):
     nx.write_gpickle(graph, getFile(name, Datafile.GRAPH_PICKLE))
 
     print("forming metaclusters")
     if initPositions:
         for i in initPositions:
-            node = initPositions[i]
-            graph.nodes[i]["x"] = node["position"][0]  # - node["center"]["x"]
-            graph.nodes[i]["y"] = node["position"][1]  # - node["center"]["y"]
-            graph.nodes[i]["initial_group"] = node.get("group")
-            graph.nodes[i]["initial_topic"] = node.get("topic")
+            try:
+                node = initPositions[i]
+                graph.nodes[i]["x"] = node["position"][0]  # - node["center"]["x"]
+                graph.nodes[i]["y"] = node["position"][1]  # - node["center"]["y"]
+                graph.nodes[i]["initial_group"] = node.get("group")
+                graph.nodes[i]["initial_topic"] = node.get("topic")
+            except:
+                pdb.set_trace()
 
     components = sorted(nx.connected_components(graph), key=len, reverse=True)
     compgraphs = [graph.subgraph(comp).copy() for comp in components]
+    if terrible:
+        export_components(compgraphs, getFile(name, Datafile.METACLUSTERS))
+        return
     # min cuts
     compgraphs, edges = cut_components(compgraphs, n=10)
 
@@ -517,7 +526,32 @@ if __name__ == "__main__":
     parser.add_argument(
         "-prevname", dest="prevname", required=False, help="filename for training"
     )
+    parser.add_argument(
+        "-start",
+        dest="start",
+        help="start date (ISO)",
+    )
+    parser.add_argument(
+        "-interval",
+        dest="interval",
+        default=28,
+        type=int,
+        help="Number of days to include after the given start date",
+    )
+    parser.add_argument(
+        "-step",
+        type=int,
+        dest="step",
+        required=False,
+        help="Number of days forward to compare.",
+    )
+
     args = parser.parse_args()
-    name = args.name
-    prevname = args.prevname
-    build_and_save_graph(name, prevname=args.prevname)
+    name = names.getName(args.name, args.start, args.interval)
+    prevname = None
+    if args.step:
+        prevname = names.getPrevName(args.name, args.start, args.interval, args.step)
+    build_and_save_graph(
+        name,
+        prevname=prevname,
+    )

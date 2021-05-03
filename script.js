@@ -23,15 +23,27 @@ function getName(date, interval, suffix) {
   return str;
 }
 
-function setup() {
-  //createCanvas(SIZE, SIZE)
-  drawMaster();
+drawMaster();
+
+function constrain(a, min, max) {
+  if (a < min) {
+    return min;
+  }
+  if (a > max) {
+    return max;
+  }
+  return a;
+}
+
+function map(a, min_i, max_i, min_o, max_o) {
+  return ((a - min_i) / (max_i - min_i)) * (max_o - min_o) + min_o;
 }
 
 function drawMaster() {
   let topicName = getName(date, interval, "topics.json");
   d3.json(topicName).then((topicData) => {
     topics = topicData;
+    console.log(topics);
     topicSizes = [];
     for (k in topics) {
       topicSizes[k] = topics[k]["size"];
@@ -198,6 +210,50 @@ function getTerrainColor(t) {
         */
 }
 
+let zoom = 1;
+let cameraX = 0;
+let cameray = 0;
+
+function setCamera(x, y, z) {
+  cameraX = x;
+  cameraY = y;
+  zoom = z;
+  let vBstring = `${x} ${y} ${z} ${z}`;
+  document.getElementById("map_main").setAttribute("viewBox", vBstring);
+}
+function fixLabels() {
+  // Move labels so they aren't overlapping
+  let labels = document.getElementsByTagName("text");
+  // Quadtree impl would be nice, but N^2/2 is OK for ~200 nodes right?
+  for (let i = 0; i < labels.length; i++) {
+    let bbox_a = labels[i].getBBox();
+    for (let j = i + 1; j < labels.length; j++) {
+      let bbox_b = labels[j].getBBox();
+      if (
+        Math.abs(bbox_a.x - bbox_b.x) < Math.max(bbox_a.width, bbox_b.width)
+      ) {
+        if (
+          Math.abs(bbox_a.y - bbox_b.y) < Math.max(bbox_a.height, bbox_b.height)
+        ) {
+          if (bbox_a.y < bbox_b.y) {
+            labels[i].setAttribute(
+              "y",
+              parseFloat(labels[i].getAttribute("y")) -
+                parseFloat(labels[i].getAttribute("font-size"))
+            );
+          } else {
+            labels[i].setAttribute(
+              "y",
+              parseFloat(labels[i].getAttribute("y")) +
+                parseFloat(labels[i].getAttribute("font-size"))
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
 function drawRegionsSVG() {
   let renderRegionsSVG = function (region_data, vertex_data) {
     let find_region = function (topic) {
@@ -209,7 +265,8 @@ function drawRegionsSVG() {
         .filter((r) => r.poly != null);
     };
     let svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 1 1");
+    svg.setAttribute("viewBox", "0 0 3 3");
+    svg.setAttribute("id", "map_main");
     svg.setAttribute("width", window.innerWidth - SIDEBAR_WIDTH);
     svg.setAttribute("height", window.innerHeight);
     var rainbow = d3.scaleSequential(d3.interpolateRainbow).domain([0, 100]);
@@ -271,6 +328,19 @@ function drawRegionsSVG() {
       r.poly = poly;
       svg.appendChild(poly);
     }
+    for (topic in topics) {
+      let text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.innerHTML = topics[topic].region_name;
+      let fsize = map(Math.sqrt(topics[topic].size), 0, 100, 0.005, 0.04);
+      let name_offset = (text.innerHTML.length * fsize) / 4;
+      text.setAttribute("x", topics[topic].x - name_offset);
+      text.setAttribute(
+        "y",
+        topics[topic].y + (Math.random() - 0.5) * fsize * 2
+      );
+      text.setAttribute("font-size", `${fsize}pt`);
+      svg.appendChild(text);
+    }
     return svg;
   };
   d3.tsv(getName(date, interval, "vertices.tsv")).then((vertexData) => {
@@ -306,6 +376,12 @@ function drawRegionsSVG() {
       let svg = renderRegionsSVG(regionData, vertexData);
       console.log("done constructing");
       document.getElementById("svgContainer").replaceChildren(svg);
+      fixLabels();
+      svgPanZoom("#map_main", {
+        controlIconsEnabled: true,
+        minZoom: 0.5,
+        maxZoom: 10,
+      });
     });
   });
 }

@@ -23,7 +23,7 @@ from scipy.spatial.distance import jensenshannon
 
 import topic2mds
 import cluster_topics
-import analyze_topics
+from analyze_topics import analyze_topics
 import subprocess
 from names import Datafile, getFile
 import names
@@ -82,6 +82,7 @@ OTHER_STOPWORDS = [
     "new",
     "update",
     "could",
+    "HKO_WHL",
 ]
 
 CORES = 4
@@ -120,6 +121,7 @@ def clean(df):
     df = df.dropna(subset=["title"])
     df["title"] = df["title"].replace(r"\\n", " ", regex=True)
     df["title"] = [strip_tags(s) for s in df["title"]]
+    df["title"] = [None if s.startswith("http") else s for s in df["title"]]
     df = df[df["title"].notnull()]
 
     return df
@@ -417,6 +419,14 @@ def get_topics(
     scores_df = scores
     assert (scores.index == df.index).all()
     scores_df.to_csv(getFile(name, Datafile.SCORES), sep="\t", index=False)
+    scores_sums = scores_df.sum()
+    scores_sums = scores_sums.sort_index()
+    # Write this here because the graph algo step requires this info
+    # and the analyze_topics.py as it is right now depends on the graph algo
+    # output
+    records = pd.DataFrame(scores_sums, columns=["size"]).to_dict(orient="index")
+    with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
+        f.write(json.dumps(records))
 
     scores_df["dominant_topic"] = scores_df.idxmax(axis=1)
     scores_df["title"] = df["title"]
@@ -613,11 +623,10 @@ if __name__ == "__main__":
             getFile(name, Datafile.DISTANCE_WMD), sep="\t"
         )
 
-    # print("calculating MDS")
-    # topic2mds.calculateMDS(name)
     print("building topic adjacency graph")
-    analyze_topics.analyze_topics(name)
     if name2:
         cluster_topics.build_and_save_graph(name, prevname=name2)
     else:
         cluster_topics.build_and_save_graph(name)
+
+    analyze_topics(name)

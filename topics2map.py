@@ -17,7 +17,7 @@ import scipy.spatial as spatial
 import scipy.stats as stats
 import sys
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from time import sleep
 
 import names
@@ -50,7 +50,7 @@ def plt_voronoi(pts, topics):
     fig.set_size_inches(5, 5)
     plt.xlim(-0.1, 1.1)
     plt.ylim(1.1, -0.1)
-    plt.show()
+    # plt.show()
 
 
 class PolygonMap:
@@ -67,7 +67,7 @@ class PolygonMap:
         """
         return int(self.rough_points["topic"][idx])
 
-    def create_initial_polygons(self, layout_df, density=2000, land_density=5000):
+    def create_initial_polygons(self, layout_df, density=1000, land_density=5000):
         """
         Given a set of initial topics, create the "rough" voronoi skeleton
         for the map.
@@ -101,7 +101,7 @@ class PolygonMap:
 
         noise_pts = np.ndarray((0, 2))
         for g, center in centers.iterrows():
-            n_pts = int(max_dist.loc[g] ** 2 * np.pi * density)
+            n_pts = int(max_dist.loc[g] ** 2 * np.pi * density) + 32
             theta = np.random.random(n_pts) * np.pi * 2
             radius = np.random.normal(
                 loc=max_dist.loc[g], scale=medians.loc[g] / 2, size=n_pts
@@ -133,7 +133,7 @@ class PolygonMap:
             n_pts = int(row["radius"] ** 2 * np.pi * land_density)
             topic_points.append([row["x"], row["y"], i])
             for _ in range(n_pts):
-                theta = np.random.random() * 3.14 * 2
+                theta = np.random.random() * np.pi * 2
                 rad = np.random.random() * row["radius"]
                 x = row["x"] + np.cos(theta) * rad
                 y = row["y"] + np.sin(theta) * rad
@@ -329,7 +329,7 @@ class PolygonMap:
             else:
                 self.topics[i] = -1
 
-    def __init__(self, n=30, name=""):
+    def __init__(self, n, dims, name=""):
         """
         Initialize the PolygonMap class, with n points
         Arguments:
@@ -338,13 +338,16 @@ class PolygonMap:
         # init healines to empty array of arrays
 
         # fill with n random 2D vectors
+        self.scale = np.max((dims["xmax"], dims["ymax"])) * 1.05
         self.name = name
-        self.pts = np.random.random((n, 2))
 
+        self.pts = np.random.random((n, 2))
         # use lloyd relaxation to space them better
+        self.pts = PolygonMap.improve_points(self.pts)
+        self.pts *= self.scale
+
         self.vor = spatial.Voronoi(self.pts)
         self.n_regions = len(self.vor.regions)
-        self.pts = PolygonMap.improve_points(self.pts)
         # ok, so each voronoi vertex defines triangle, with the 3 points of the triangle =
         # the voronoi centers of the neighboring polygons
         self.delaunay = spatial.Delaunay(self.pts)
@@ -568,6 +571,57 @@ class PolygonMap:
                     break
                 j += 1
 
+    def compress_water(self):
+        print("Compressing water...")
+        water_idx = np.argmin(self.elevation)
+        visited = set()
+        water = set([water_idx])
+        qu = deque()
+        qu.append(water_idx)
+        links = defaultdict(set)
+        while True:
+            idx = qu.popleft()
+            neighs = self.delaunay.neighbors[idx]
+            for n_i, n in enumerate(neighs):
+                if n in visited:
+                    continue
+                if n != -1 and self.elevation[n] <= 0:
+                    qu.append(n)
+                    water.add(n)
+                else:
+                    # This has a land edge, we add it to the outline
+                    edge = [
+                        vx
+                        for vx_i, vx in enumerate(self.delaunay.simplices[idx])
+                        if vx_i != n_i
+                    ]
+                    links[edge[0]].add(edge[1])
+                    links[edge[1]].add(edge[0])
+            visited.add(idx)
+            if len(qu) == 0:
+                break
+        coordinates = []
+        start = list(links.keys())[0]
+        idx = start
+        last = None
+        while True:
+            coordinates.append(idx)
+            next_coords = links[idx]
+            if last is None:
+                last = idx
+                idx = list(next_coords)[0]
+            else:
+                nonvisited = [a for a in next_coords if a != last]
+                if len(nonvisited) != 1:
+                    pdb.set_trace()
+                last = idx
+                idx = nonvisited[0]
+            if idx == start:
+                break
+
+        pdb.set_trace()
+        return coordinates, water
+
     def export(self):
         """
         Export to a format that we can pass to JS frontend
@@ -579,6 +633,8 @@ class PolygonMap:
         # df.to_csv(getFile(self.name, Datafile.POINTS_TSV), sep="\t")
         # df = pd.DataFrame(self.vor.vertices, columns=["x", "y"])
         df.to_csv(getFile(self.name, Datafile.VERTICES_TSV), sep="\t")
+
+        # water_coordinates, water_regions = self.compress_water()
 
         df = pd.DataFrame()
         df["elevation"] = self.elevation
@@ -594,6 +650,9 @@ class PolygonMap:
         df["moisture"] = self.moisture
         df["temperature"] = self.temperature
         df["shadow"] = self.shadow
+
+        # df = df[~df.index.isin(water_regions)]
+        df = df[df["elevation"] > 0]
 
         df.to_csv(getFile(self.name, Datafile.REGIONS_TSV), sep="\t")
 
@@ -661,23 +720,32 @@ if __name__ == "__main__":
     # topic_df = topic_df.reset_index()
     # Now, topic #s (except assigned at the end in export, are the col indexes)
 
-    # scale the x and y appropriately. Must be scaled together, not separately!
+    # largest = max(xmax - xmin, ymax - ymin)
+    largest = 1000
+    topic_df["radius"] = get_radius(topic_df)
+    topic_df["radius"] /= largest
+    topic_df["x"] -= np.min(topic_df["x"]) - 10
+    topic_df["y"] -= np.min(topic_df["y"]) - 10
+    topic_df["x"] /= largest
+    topic_df["y"] /= largest
+    print(getFile(name, Datafile.TOPIC_JSON))
+    topics = json.load(open(getFile(name, Datafile.TOPIC_JSON)))
+    for topic in topics:
+        topics[topic]["x"] = topic_df["x"][int(topic)]
+        topics[topic]["y"] = topic_df["y"][int(topic)]
+    with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
+        f.write(json.dumps(topics))
+
     xmin = np.min(topic_df["x"])
     xmax = np.max(topic_df["x"])
-
     ymin = np.min(topic_df["y"])
     ymax = np.max(topic_df["y"])
 
-    largest = max(xmax - xmin, ymax - ymin)
-    topic_df["x"] -= xmin
-    topic_df["y"] -= ymin
-    topic_df["x"] /= largest
-    topic_df["y"] /= largest
-    topic_df["radius"] = get_radius(topic_df)
-    topic_df["radius"] /= largest
-    print(largest)
+    print(f"Using scale factor {largest}, x ({xmin}, {xmax}) y ({ymin} {ymax})")
 
-    m = PolygonMap(args.n, name)
+    m = PolygonMap(
+        args.n, {"xmin": xmin, "xmax": xmax, "ymin": ymin, "ymax": ymax}, name
+    )
     m.create_initial_polygons(topic_df)
     m.initial_elevation()
     m.normalize()
