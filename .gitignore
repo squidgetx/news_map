@@ -10,4 +10,5 @@ __pycache__
 creds.sh
 glove.6B
 docs
+*.txt
 

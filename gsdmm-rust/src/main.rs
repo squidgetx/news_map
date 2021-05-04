@@ -91,6 +91,18 @@ fn main() {
         }
     }
 
+    // write the label probabilities
+    {
+        let fname = (&args.arg_outprefix).clone() + "label_probabilities.csv";
+        let error_msg = format ! ("Could not write file {}!", fname);
+        let mut f = File::create( fname ).expect( & error_msg);
+        for doc in & (model.doc_vectors) {
+            let p = model.score( & doc);
+            let line = p.iter().map( | k | (*k as f32).to_string()).collect::< Vec< String > > ().join(",");
+            f.write((line + "\n").as_bytes());
+        }
+    }
+
     // write the cluster descriptions
     {
         let fname = (&args.arg_outprefix).clone() + "cluster_descriptions.txt";

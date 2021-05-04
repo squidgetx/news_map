@@ -1,4 +1,5 @@
 mediacloud
+cython
 numpy
 scipy
 matplotlib
@@ -8,5 +9,5 @@ gensim
 pandas
 np
 pyemd
-cython
-fitsne
+textblob
+tracery

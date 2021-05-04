@@ -39,15 +39,17 @@ def handler(signum, frame):
 # or, metadata can indicate success (but last refresh data was stale), so we need to fetch new data
 # or, metadata can indicate success and last refresh data wasn't stale, so we don't need to do anything
 def get_continue_params(metadata):
+    if metadata is None:
+        return None
     error = metadata.get("error")
     if error:
         # we need to redo the query from where we left off
         return metadata["last_query"]
 
     ds = metadata.get("latest")
-    if ds and ds == str(datetime.date.today()):
-        # we're fine don't do anything
-        return None
+    # if ds and ds == str(datetime.date.today()):
+    # we're fine don't do anything
+    # return None
 
     # parse starting from last to today
     return {
@@ -124,12 +126,15 @@ if __name__ == "__main__":
     METADATA_FILENAME = f"{args.keyword}_metadata.json"
     if os.path.exists(METADATA_FILENAME):
         with open(METADATA_FILENAME, "rt") as f:
-            metadata = json.load(f)
+            try:
+                metadata = json.load(f)
+            except:
+                metadata = None
 
     query = get_continue_params(metadata)
     if not query:
-        print("Latest refresh was today. No more work to do!")
-        sys.exit()
+        print("Couldn't load last version. I hope you supplied arguments!")
+        query = {}
 
     if args.start:
         query["start"] = args.start
@@ -146,9 +151,11 @@ if __name__ == "__main__":
     mc = mediacloud.api.MediaCloud(os.environ.get("MEDIACLOUD_API_KEY"))
     stories = []
     error = False
-    last_processed_stories_id = query["last_processed_id"]
+    last_processed_stories_id = query.get("last_processed_id", 2290644626)
     while True:
-        print(f"fetching story {len(stories)} through {len(stories) + BATCH_SIZE}...")
+        print(
+            f"fetching story {len(stories)} through {len(stories) + BATCH_SIZE} for {start} - {end}"
+        )
         # register the handler
         signal.signal(signal.SIGALRM, handler)
         # set timer

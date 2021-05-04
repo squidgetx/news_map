@@ -1,5 +1,4 @@
 # Python script to take an input corpus and output topics
-from datetime import datetime, timedelta
 import argparse
 import json
 import logging
@@ -23,9 +22,11 @@ from gsdmm import MovieGroupProcess
 from scipy.spatial.distance import jensenshannon
 
 import topic2mds
-import analyze_topics
+import cluster_topics
+from analyze_topics import analyze_topics
 import subprocess
 from names import Datafile, getFile
+import names
 from wmdistance import WMDistance
 
 import pdb
@@ -81,6 +82,7 @@ OTHER_STOPWORDS = [
     "new",
     "update",
     "could",
+    "HKO_WHL",
 ]
 
 CORES = 4
@@ -117,8 +119,10 @@ def clean(df):
     if "stories_id" in df:
         df = df.drop_duplicates(subset=["stories_id"])
     df = df.dropna(subset=["title"])
-    sentences = df["title"].replace(r"\\n", " ", regex=True)
+    df["title"] = df["title"].replace(r"\\n", " ", regex=True)
     df["title"] = [strip_tags(s) for s in df["title"]]
+    df["title"] = [None if s.startswith("http") else s for s in df["title"]]
+    df = df[df["title"].notnull()]
 
     return df
 
@@ -168,8 +172,9 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
         for t in dictionary.itervalues():
             f.write(t)
             f.write("\n")
+    index = []
     with open("data/sentences.txt", "wt") as f:
-        for doc in corpus:
+        for i, doc in enumerate(corpus):
             arr = []
             for tok in doc:
                 for _ in range(tok[1]):
@@ -177,6 +182,7 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
             if arr:
                 f.write(" ".join(arr))
                 f.write("\n")
+                index.append(i)
 
     print("spawning gsdmm-rust subprocess")
     # spawn the rust subprocess
@@ -209,7 +215,7 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
     # now read the cluster descriptions file into an ndarray
     print("retrieving gsdmm-rust output")
     mapping = dictionary.token2id
-    topic_ndarray = np.zeros((num_topics, len(mapping) + 1))
+    topic_ndarray = np.zeros((num_topics, len(mapping)))
 
     with open(getFile(name, Datafile.RUST_CLUSTER_DESC), "rt") as f:
         while True:
@@ -234,6 +240,8 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
                 break
             comps = line.split(",")
             scores.append({int(comps[0]): float(comps[1])})
+    scores = pd.DataFrame(scores).fillna(0)
+    scores.index = index
     return dictionary, topic_ndarray, scores
 
 
@@ -408,30 +416,28 @@ def get_topics(
     np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
 
     print("preparing scores")
-    media_names = df["media_name"].fillna("No Media Name")
-    scores_df = pd.DataFrame(scores).fillna(0)
+    scores_df = scores
+    assert (scores.index == df.index).all()
     scores_df.to_csv(getFile(name, Datafile.SCORES), sep="\t", index=False)
+    scores_sums = scores_df.sum()
+    scores_sums = scores_sums.sort_index()
+    # Write this here because the graph algo step requires this info
+    # and the analyze_topics.py as it is right now depends on the graph algo
+    # output
+    records = pd.DataFrame(scores_sums, columns=["size"]).to_dict(orient="index")
+    with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
+        f.write(json.dumps(records))
+
     scores_df["dominant_topic"] = scores_df.idxmax(axis=1)
     scores_df["title"] = df["title"]
+    assert scores_df["title"].notnull().all()
+    scores_df["url"] = df["url"]
+    scores_df["publish_date"] = df["publish_date"]
+    media_names = df["media_name"].fillna("No Media Name")
     scores_df["media_name"] = media_names
-    grouped = scores_df.groupby(["dominant_topic", "media_name"]).count()["title"]  #
-    scores_df[["dominant_topic", "title", "media_name"]].to_csv(
+    scores_df[["dominant_topic", "title", "media_name", "url", "publish_date"]].to_csv(
         getFile(name, Datafile.HEADLINES_TSV), sep="\t", index=False
     )
-    totals = scores_df.sum()
-
-    print("exporting topics.json")
-
-    # export the topic descriptions to topics.json
-    topics_dict = topic_ndarray_to_dict(dictionary, topics)
-    for k in range(len(topics_dict)):
-        topics_dict[k]["_metadata_"] = {"total": 0, "media_names": {}}
-        topics_dict[k]["_metadata_"]["total"] = totals.get(int(k), 0)
-        if int(k) in grouped:
-            topics_dict[k]["_metadata_"]["media_names"] = grouped.get(int(k)).to_dict()
-
-    with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
-        f.write(json.dumps(topics_dict))
     assert len(scores_df) == len(corpus)
 
     return topics
@@ -470,7 +476,7 @@ def calculate_intertopic_distances(dictionary, topics, dictionary2, topics2):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train topic model on input text")
-    parser.add_argument("-train", dest="train", help="filename for training")
+    parser.add_argument("-name", dest="name", help="filename for training")
     parser.add_argument("-load", dest="load", help="name for loading")
     parser.add_argument(
         "-sample",
@@ -504,7 +510,7 @@ if __name__ == "__main__":
         dest="num_topics",
         required=False,
         type=int,
-        default=20,
+        default=100,
         help="number of topics",
     )
     parser.add_argument(
@@ -540,24 +546,14 @@ if __name__ == "__main__":
         help="whether or not to use WMD formatting",
     )
     args = parser.parse_args()
-    start_date = datetime.fromisoformat(args.start)
-    end_date = start_date + timedelta(days=args.interval)
-    if args.train:
-        basename = args.train[0:-4]
-        name = basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
+    if args.name:
+        name = names.getName(args.name, args.start, args.interval)
 
-        logging.info(f"Opening training file {args.train}")
-
-        df = pd.read_csv(args.train, sep="\t")
+        logging.info(f"Opening data files...")
+        dnames = names.getDataNames(args.name, args.start, args.interval)
+        df = pd.concat((pd.read_csv(f, sep="\t", memory_map=True) for f in dnames))
         print(f"Reading {len(df)} rows...")
         df = clean(df)
-        df[["title", "publish_date", "stories_id", "media_name"]].to_csv(
-            f"{basename}_clean.tsv", sep="\t"
-        )
-        df = df[
-            (df["publish_date"] > str(start_date.date()))
-            & (df["publish_date"] < str(end_date.date()))
-        ].reset_index()
 
         print(f"Training model...")
         dictionary, corpus = get_dict_corpus(df["title"])
@@ -565,7 +561,7 @@ if __name__ == "__main__":
         # Trim corpus to remove empty documents
         nonempty = [i for i, val in enumerate(corpus) if val != []]
         corpus = [i for i in corpus if i != []]
-        df = df.iloc[nonempty]
+        df = df.iloc[nonempty].reset_index()
 
         topics = get_topics(
             df,
@@ -582,17 +578,15 @@ if __name__ == "__main__":
         np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
 
     elif args.load:
-        basename = args.load[0:-4]
-        name = basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
+        basename = args.load
+        name = names.getName(basename, args.start, args.interval)
         topics = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
         dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))
 
     name2 = None
     if args.step:
         print("calculating intertopic distances")
-        start_date_2 = start_date - timedelta(days=args.step)
-        end_date_2 = end_date - timedelta(days=args.step)
-        name2 = basename + "_" + str(start_date_2.date()) + "_" + str(end_date_2.date())
+        name2 = names.getPrevName(basename, args.start, args.interval, args.step)
         topic2_filename = getFile(name2, Datafile.TOPIC_NDARRAY)
         topic2_dict = getFile(name2, Datafile.DICTIONARY)
         if os.path.exists(topic2_filename) and os.path.exists(topic2_dict):
@@ -621,10 +615,10 @@ if __name__ == "__main__":
             getFile(name, Datafile.DISTANCE_WMD), sep="\t"
         )
 
-    # print("calculating MDS")
-    # topic2mds.calculateMDS(name)
     print("building topic adjacency graph")
     if name2:
-        analyze_topics.build_and_save_graph(name, prevname=name2)
+        cluster_topics.build_and_save_graph(name, prevname=name2)
     else:
-        analyze_topics.build_and_save_graph(name)
+        cluster_topics.build_and_save_graph(name)
+
+    analyze_topics(name)
