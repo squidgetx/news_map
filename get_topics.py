@@ -476,7 +476,7 @@ def calculate_intertopic_distances(dictionary, topics, dictionary2, topics2):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train topic model on input text")
-    parser.add_argument("-train", dest="train", help="filename for training")
+    parser.add_argument("-name", dest="name", help="filename for training")
     parser.add_argument("-load", dest="load", help="name for loading")
     parser.add_argument(
         "-sample",
@@ -546,22 +546,14 @@ if __name__ == "__main__":
         help="whether or not to use WMD formatting",
     )
     args = parser.parse_args()
-    if args.train:
-        basename = args.train[0:-4]
-        name = names.getName(basename, args.start, args.interval)
+    if args.name:
+        name = names.getName(args.name, args.start, args.interval)
 
-        logging.info(f"Opening training file {args.train}")
-
-        df = pd.read_csv(args.train, sep="\t", memory_map=True)
+        logging.info(f"Opening data files...")
+        dnames = names.getDataNames(args.name, args.start, args.interval)
+        df = pd.concat((pd.read_csv(f, sep="\t", memory_map=True) for f in dnames))
         print(f"Reading {len(df)} rows...")
         df = clean(df)
-        df[["title", "publish_date", "stories_id", "media_name", "url"]].to_csv(
-            f"{basename}_clean.tsv", sep="\t"
-        )
-        df = df[
-            (df["publish_date"] > args.start)
-            & (df["publish_date"] < names.getEndDateStr(args.start, args.interval))
-        ].reset_index()
 
         print(f"Training model...")
         dictionary, corpus = get_dict_corpus(df["title"])
@@ -586,7 +578,7 @@ if __name__ == "__main__":
         np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
 
     elif args.load:
-        basename = args.load[0:-4]
+        basename = args.load
         name = names.getName(basename, args.start, args.interval)
         topics = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
         dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))

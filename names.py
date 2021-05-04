@@ -54,6 +54,14 @@ def getTopicSizes(name):
     return sizes
 
 
+def getDataNames(basename: str, datestr: str, interval: int):
+    start_date = datetime.fromisoformat(datestr)
+    return (
+        f"data/raw/{basename}_{str((start_date + timedelta(days=d)).date())}.tsv"
+        for d in range(interval)
+    )
+
+
 def getName(basename: str, datestr: str, interval: int):
     start_date = datetime.fromisoformat(datestr)
     end_date = start_date + timedelta(days=interval)

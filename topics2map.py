@@ -629,10 +629,9 @@ class PolygonMap:
         We might need to build a backend LOL
         We'll just dump the points, edges, and elevations basically
         """
-        df = pd.DataFrame(self.pts, columns=["x", "y"])
+        vx_df = pd.DataFrame(self.pts, columns=["x", "y"])
         # df.to_csv(getFile(self.name, Datafile.POINTS_TSV), sep="\t")
         # df = pd.DataFrame(self.vor.vertices, columns=["x", "y"])
-        df.to_csv(getFile(self.name, Datafile.VERTICES_TSV), sep="\t")
 
         # water_coordinates, water_regions = self.compress_water()
 
@@ -653,8 +652,13 @@ class PolygonMap:
 
         # df = df[~df.index.isin(water_regions)]
         df = df[df["elevation"] > 0]
-
         df.to_csv(getFile(self.name, Datafile.REGIONS_TSV), sep="\t")
+
+        used_vxs = set()
+        for c in df["coordinates"]:
+            used_vxs.update(json.loads(c))
+        vx_df = vx_df.reset_index().iloc[list(used_vxs)]
+        vx_df.to_csv(getFile(self.name, Datafile.VERTICES_TSV), sep="\t")
 
 
 if __name__ == "__main__":
@@ -724,8 +728,8 @@ if __name__ == "__main__":
     largest = 1000
     topic_df["radius"] = get_radius(topic_df)
     topic_df["radius"] /= largest
-    topic_df["x"] -= np.min(topic_df["x"]) - 10
-    topic_df["y"] -= np.min(topic_df["y"]) - 10
+    topic_df["x"] -= np.min(topic_df["x"]) - 100
+    topic_df["y"] -= np.min(topic_df["y"]) - 100
     topic_df["x"] /= largest
     topic_df["y"] /= largest
     print(getFile(name, Datafile.TOPIC_JSON))
@@ -759,3 +763,4 @@ if __name__ == "__main__":
     m.assign_topics()
     # m.calculate_shadows()
     m.export()
+    # s3_uploader.upload(name)

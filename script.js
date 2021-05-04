@@ -1,6 +1,19 @@
 const SIZE = 800;
 const SIDEBAR_WIDTH = 400;
 const DEBUG = false;
+
+// Initialize the Amazon Cognito credentials provider
+const S3_BUCKET = "fogofwar";
+var s3 = new AWS.S3({
+  apiVersion: "2006-03-01",
+  params: { Bucket: albumBucketName },
+});
+
+AWS.config.region = "us-east-2"; // Region
+AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+  IdentityPoolId: "us-east-2:f4537342-bcf0-45e1-b055-b95ee3752b71",
+});
+
 let vertex_data, region_data, tsne, topics;
 let topicSizes = (topicMediaNames = []);
 let mode = 0;
@@ -157,14 +170,13 @@ function getTerrain(r) {
 function getTerrainColorInterpolate(r) {
   let colors = [
     d3.interpolateRgb(getTerrainColor("desert"), getTerrainColor("savannah")),
-    d3.interpolateRgb(getTerrainColor("savannah"), getTerrainColor("pasture")),
-    d3.interpolateRgb(getTerrainColor("pasture"), getTerrainColor("rock")),
-    d3.interpolateRgb(getTerrainColor("rock"), getTerrainColor("snow")),
+    d3.interpolateRgb(getTerrainColor("savannah"), getTerrainColor("forest")),
+    d3.interpolateRgb(getTerrainColor("forest"), getTerrainColor("rainforest")),
   ];
   let len = colors.length;
   let elev = constrain(r.elevation, 0, 0.999);
   let color = colors[Math.floor(elev * len)](
-    r.elevation * len - Math.floor(elev * len)
+    elev * len - Math.floor(elev * len)
   );
   return color;
   /*
@@ -195,162 +207,135 @@ function getTerrainColor(t) {
     savannah: "#dae39f",
     snow: "#ffffff",
     forest: "#216b2c",
-    rainforest: "#319e41",
+    rainforest: "#185713",
     darksnow: "#f0e4d5",
   };
   return TerrainColor[t];
-
-  /*
-        let c1 = colorGrid[mIndex][tIndex + 1];
-        //let c2 = colorGrid[mIndex + 1][tIndex];
-        //let c3 = colorGrid[mIndex + 1][tIndex + 1];
-        let c01 = d3.interpolateRgb(c0, c1)(tFrac);
-        let c23 = d3.interpolateRgb(c2, c3)(tFrac);
-        color = d3.interpolateRgb(c01, c23)(mFrac);
-        */
-}
-
-let zoom = 1;
-let cameraX = 0;
-let cameray = 0;
-
-function setCamera(x, y, z) {
-  cameraX = x;
-  cameraY = y;
-  zoom = z;
-  let vBstring = `${x} ${y} ${z} ${z}`;
-  document.getElementById("map_main").setAttribute("viewBox", vBstring);
-}
-function fixLabels() {
-  // Move labels so they aren't overlapping
-  let labels = document.getElementsByTagName("text");
-  // Quadtree impl would be nice, but N^2/2 is OK for ~200 nodes right?
-  for (let i = 0; i < labels.length; i++) {
-    let bbox_a = labels[i].getBBox();
-    for (let j = i + 1; j < labels.length; j++) {
-      let bbox_b = labels[j].getBBox();
-      if (
-        Math.abs(bbox_a.x - bbox_b.x) < Math.max(bbox_a.width, bbox_b.width)
-      ) {
-        if (
-          Math.abs(bbox_a.y - bbox_b.y) < Math.max(bbox_a.height, bbox_b.height)
-        ) {
-          if (bbox_a.y < bbox_b.y) {
-            labels[i].setAttribute(
-              "y",
-              parseFloat(labels[i].getAttribute("y")) -
-                parseFloat(labels[i].getAttribute("font-size"))
-            );
-          } else {
-            labels[i].setAttribute(
-              "y",
-              parseFloat(labels[i].getAttribute("y")) +
-                parseFloat(labels[i].getAttribute("font-size"))
-            );
-          }
-        }
-      }
-    }
-  }
 }
 
 function drawRegionsSVG() {
   let renderRegionsSVG = function (region_data, vertex_data) {
-    let find_region = function (topic) {
-      // return the set of polygons that have this topic and are contiguous
-      // don't bother with flood fill, just select region based on topic membership
-      return region_data
-        .filter((r) => r.topic == topic)
-        .filter((r) => r.elevation > 0)
-        .filter((r) => r.poly != null);
-    };
-    let svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 3 3");
-    svg.setAttribute("id", "map_main");
-    svg.setAttribute("width", window.innerWidth - SIDEBAR_WIDTH);
-    svg.setAttribute("height", window.innerHeight);
-    var rainbow = d3.scaleSequential(d3.interpolateRainbow).domain([0, 100]);
-    for (let r of region_data) {
-      if (r.isEdge) {
-        r.poly = null;
-        continue;
-      }
-      //let color = "rgb(210, 230, 245)";
-      let color = "#b5c8f5";
-      let shade = Math.floor(map(r.elevation, 0, 1, 255, 0));
-      r.shade = shade;
-      if (r.elevation > 0) {
-        //color = getTerrainColor(getTerrain(r));
-        color = getTerrainColorInterpolate(r);
-      } else {
-        color = d3.color(color).darker(-r.elevation * 4);
-      }
-      if (r.shadow == 1) {
-        color = d3.color(color).darker(0.5);
-      }
-      if (r.shadow == -1) {
-        //color = d3.color(color).brighter(0.5);
-      }
-      let poly = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      let points = "M";
-      for (const c of r.coordinates) {
-        if (c != -1) {
-          points += vertex_data[c].x + "," + vertex_data[c].y + " ";
-        }
-      }
-      points = points.slice(0, -1);
-      poly.setAttribute("d", points);
-      poly.setAttribute("style", `fill: ${color}`);
-      poly.addEventListener("mouseenter", (ev) => {
-        let polys = find_region(r.topic);
-        for (let re of polys) {
-          let p = re.poly;
-          //let color = getTerrainColor(getTerrain(re));
-          let color = getTerrainColorInterpolate(re);
-          if (re.shadow == 1) {
-            color = d3.color(color).darker(0.5);
-          }
-          color = d3.color(color).darker();
-          p.setAttribute("style", `fill: ${color};`);
-        }
-        drawCard(r.topic, r);
-      });
-      poly.addEventListener("mouseleave", () => {
-        let polys = find_region(r.topic);
-        for (let re of polys) {
-          let color = getTerrainColorInterpolate(re);
-          if (re.shadow == 1) {
-            color = d3.color(color).darker(0.5);
-          }
-          re.poly.setAttribute("style", `fill: ${color}`);
-        }
-      });
-      r.poly = poly;
-      svg.appendChild(poly);
+    const selector = "#svgContainer";
+    let svg = d3.select(selector).select("svg");
+    if (svg.empty()) {
+      svg = d3.select(selector).append("svg").attr("id", "map_main");
+      let xExt = d3.extent(Object.values(vertex_data).map((r) => r.x));
+      let yExt = d3.extent(Object.values(vertex_data).map((r) => r.y));
+      let vBox = `${xExt[0]} ${yExt[0]} ${xExt[1] - xExt[0]} ${
+        yExt[1] - yExt[0]
+      }`;
+      svg
+        .attr("viewBox", vBox)
+        .attr("width", window.innerWidth - SIDEBAR_WIDTH)
+        .attr("height", window.innerHeight);
+      svg.append("g").attr("class", "regions");
+      svg.append("g").attr("class", "text-secondary");
+      svg.append("g").attr("class", "text-primary");
+      var defs = svg.append("defs");
+
+      var filter = defs.append("filter").attr("id", "dropshadow");
+
+      filter
+        .append("feGaussianBlur")
+        .attr("in", "SourceAlpha")
+        .attr("stdDeviation", 0.0025)
+        .attr("result", "blur");
+      filter
+        .append("feComponentTransfer")
+        .attr("in", "blur")
+        .attr("result", "offsetBlur")
+        .html(
+          '<feFuncA type="table" tableValues="0 .05 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"/>'
+        );
+      filter
+        .append("feFlood")
+        .attr("in", "offsetBlur")
+        .attr("flood-color", "#fff")
+        .attr("flood-opacity", "0.8")
+        .attr("result", "offsetColor");
+      filter
+        .append("feComposite")
+        .attr("in", "offsetColor")
+        .attr("in2", "offsetBlur")
+        .attr("operator", "in")
+        .attr("result", "offsetBlur");
+
+      var feMerge = filter.append("feMerge");
+      feMerge.append("feMergeNode").attr("in", "offsetBlur");
+      feMerge.append("feMergeNode").attr("in", "SourceGraphic");
     }
-    for (topic in topics) {
-      let text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.innerHTML = topics[topic].region_name;
-      let fsize = map(Math.sqrt(topics[topic].size), 0, 100, 0.005, 0.04);
-      let name_offset = (text.innerHTML.length * fsize) / 4;
-      text.setAttribute("x", topics[topic].x - name_offset);
-      text.setAttribute(
-        "y",
-        topics[topic].y + (Math.random() - 0.5) * fsize * 2
-      );
-      text.setAttribute("font-size", `${fsize}pt`);
-      svg.appendChild(text);
-    }
+    let regions = svg.select(".regions").selectAll("path").data(region_data);
+    regions
+      .enter()
+      .append("path")
+      .merge(regions)
+      .attr("d", (r) => {
+        let points = "M";
+        for (const c of r.coordinates) {
+          if (c != -1) {
+            points += vertex_data[c].x + "," + vertex_data[c].y + " ";
+          }
+        }
+        points = points.slice(0, -1);
+        return points;
+      })
+      .style("fill", (r) => getTerrainColorInterpolate(r))
+      .style("stroke", (r) => getTerrainColorInterpolate(r))
+      .style("stroke-width", 0.0025)
+      .style("cursor", "pointer")
+      .attr("class", (r) => "t" + r.topic)
+      .on("mouseover", (ev, r) => {
+        d3.selectAll(`.t${r.topic}`)
+          .style("fill", (r) => {
+            let color = getTerrainColorInterpolate(r);
+            return d3.color(color).darker();
+          })
+          .style("stroke", (r) => {
+            let color = getTerrainColorInterpolate(r);
+            return d3.color(color).darker();
+          });
+      })
+      .on("mouseout", (ev, r) => {
+        d3.selectAll(`.t${r.topic}`)
+          .style("fill", (r) => {
+            return getTerrainColorInterpolate(r);
+          })
+          .style("stroke", (r) => {
+            return (color = getTerrainColorInterpolate(r));
+          });
+      })
+      .on("click", (_, r) => drawCard(r.topic));
+    regions.exit().remove();
+
+    let getFontSize = (t) => map(Math.sqrt(t.size), 0, 100, 0.005, 0.04);
+    let labels = svg
+      .select(".text-primary")
+      .selectAll("text")
+      .data(Object.values(topics));
+    labels
+      .enter()
+      .append("text")
+      .html((d) => d.region_name.toUpperCase())
+      .style("fill", "#444")
+      .style("text-anchor", "middle")
+      .attr("x", (d) => d.x)
+      .attr("y", (d) => d.y)
+      .attr("filter", "url(#dropshadow)")
+      .attr("font-size", (d) => `${getFontSize(d)}pt`);
     return svg;
   };
   d3.tsv(getName(date, interval, "vertices.tsv")).then((vertexData) => {
-    vertexData = vertexData.map((d, i) => {
-      return {
-        id: i,
-        x: parseFloat(d.x),
-        y: parseFloat(d.y),
-      };
-    });
+    vertexData = Object.fromEntries(
+      vertexData.map((d, i) => {
+        return [
+          d.index,
+          {
+            x: parseFloat(d.x),
+            y: parseFloat(d.y),
+          },
+        ];
+      })
+    );
     d3.tsv(getName(date, interval, "regions.tsv")).then((regionData) => {
       console.log("regiondata", regionData);
       regionData = regionData.map((d, i) => {
@@ -371,12 +356,10 @@ function drawRegionsSVG() {
           shadow: parseInt(d.shadow),
         };
       });
-      console.log(vertexData);
-      console.log(regionData);
+      console.log(Object.keys(vertexData).length, "vertexes");
+      console.log(regionData.length, "triangles");
       let svg = renderRegionsSVG(regionData, vertexData);
       console.log("done constructing");
-      document.getElementById("svgContainer").replaceChildren(svg);
-      fixLabels();
       svgPanZoom("#map_main", {
         controlIconsEnabled: true,
         minZoom: 0.5,

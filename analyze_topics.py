@@ -1,4 +1,5 @@
 # Python script to take an input corpus and output topics
+import inflect
 import random
 import util
 import tracery
@@ -37,7 +38,7 @@ def rank(arr, val):
 
 
 PENINSULA = [
-    "point",
+    "peninsula",
     "outcrop",
     "cape",
     "beach",
@@ -67,19 +68,19 @@ LAND_NAMES = [
     "glacier",
     "expanse",
     "wasteland",
-    "canyons",
+    "canyon",
     "mountain",
     "peak",
 ]
 
-ISLANDS = ["islet", "isle", "island", "mini-Continent"]
+ISLANDS = ["isle", "island", "island", "island", "mini-Continent"]
 
 
 def score_sentiment(sentence):
     t = TextBlob(sentence)
     polarity = t.sentiment.polarity
     subjectivity = t.sentiment.subjectivity
-    return subjectivity
+    return polarity
 
 
 def get_degrees(name, topics_json):
@@ -95,6 +96,7 @@ def get_degrees(name, topics_json):
 
 
 def get_name(topics_json, topic):
+    p = inflect.engine()
     if topics_json[topic]["size"] == 0:
         return ""
     # Sort by the second value in the tuple which is the float representation
@@ -119,20 +121,21 @@ def get_name(topics_json, topic):
     land_names = [w.capitalize() for w in land_names]
     size = util.scale(topics_json[topic]["size"], 0, 4000, 0, 1, use_clamp=True)
 
-    words = ["#w# #r#", "#r# #w#", "#r#-#w#", "#w#-#r#", "#w#", "#r#"]
+    words = ["#w#/#r#", "#r#/#w#", "#r#-#w#", "#w#-#r#", "#w#", "#w#", "#w#", "#w#"]
     if top_cw == top_rw:
         words = ["#w#"]
     elif set(top_cw).issubset(set(top_rw)) or len(top_rw) >= 3:
         words = ["#r#"]
-    elif set(top_rw).issubset(set(top_cw)) or len(top_cw) >= 3:
+    elif set(top_rw).issubset(set(top_cw)) or len(top_cw) >= 3 or size > 0.75:
         words = ["#w#"]
     rules = {
         "origin": ["#land# of #words#", "#words# #land#"],
         "words": words,
-        "r": " ".join([w.capitalize() for w in top_cw]),
-        "w": " ".join([w.capitalize() for w in top_rw]),
-        "land": ["#l#", "#l#s"],
+        "r": " ".join([w.capitalize() for w in top_rw]),
+        "w": " ".join([w.capitalize() for w in top_cw]),
+        "land": ["#l#", "#ls#"],
         "l": util.rank(land_names, size),
+        "ls": p.plural(util.rank(land_names, size)),
     }
     grammar = tracery.Grammar(rules)
     grammar.add_modifiers(base_english)
@@ -143,7 +146,7 @@ def get_word_relevance(name, topics_json):
     print("Calcuating word relevance")
 
     dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))
-    LAMBDA = 0.7
+    LAMBDA = 0.9
     topic_ndarray = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
     ps_token_corpus = np.array(
         [dictionary.cfs[token] / dictionary.num_pos for token in dictionary.keys()]
@@ -157,13 +160,24 @@ def get_word_relevance(name, topics_json):
         )
         top_relevant_tokens = np.argsort(topic_word_relevance)[::-1][0:20]
         top_common_tokens = np.argsort(row)[::-1][0:20]
+        BLACKLIST = [
+            "ma_zone_forecast",
+            "lottery_state_by",
+            "mobile_world",
+            "ct_boston_norton",
+            "richard_grenell",
+            "east_africa",
+            "credit_cards",
+        ]
         topics_json[topic]["relevant_words"] = [
             [dictionary.id2token[tok], topic_word_relevance[tok]]
             for tok in top_relevant_tokens
+            if dictionary.id2token[tok] not in BLACKLIST
         ]
         topics_json[topic]["common_words"] = [
             [dictionary.id2token[tok], topic_word_relevance[tok]]
             for tok in top_common_tokens
+            if dictionary.id2token[tok] not in BLACKLIST
         ]
         # del topics_json[str(topic)]["words"]
 
@@ -192,7 +206,7 @@ def analyze_topics(name, headlines=None, scores=None):
             sentiments[i] = score_sentiment(row["title"])
         except:
             pdb.set_trace()
-            """
+    """
 
     headlines["subjectivity"] = sentiments
 
@@ -214,7 +228,7 @@ def analyze_topics(name, headlines=None, scores=None):
     subj_map.to_csv(getFile(name, Datafile.TOPIC_METADATA_TSV), sep="\t")
     records = subj_map.to_dict(orient="index")
     for topic in subj_map.index:
-        recent_headlines = scores[topic][scores[topic] > 0.999].iloc[::-1][0:100]
+        recent_headlines = scores[topic][scores[topic] > 0.9999].iloc[::-1][0:100]
         try:
             hdf = headlines.iloc[recent_headlines.index][
                 ["title", "url", "media_name", "publish_date"]
@@ -229,8 +243,12 @@ def analyze_topics(name, headlines=None, scores=None):
     for topic in records:
         records[topic]["region_name"] = get_name(records, topic)
 
+    topic_json = json.load(open(getFile(name, Datafile.TOPIC_JSON)))
+    for topic in topic_json:
+        topic_json[topic].update(records[int(topic)])
+
     with open(getFile(name, Datafile.TOPIC_JSON), "wt") as f:
-        f.write(json.dumps(records))
+        f.write(json.dumps(topic_json))
 
 
 if __name__ == "__main__":

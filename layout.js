@@ -3,7 +3,6 @@
 // Original idea and framework borrowed from https://gist.github.com/mef/7044786
 
 const d3 = require("d3"),
-  d3_force = require("./d3-force"),
   jsdom = require("jsdom"),
   fs = require("fs"),
   assert = require("assert"),
@@ -275,12 +274,12 @@ let layoutCluster = function (
     let linkNodeIds = getLinkedNodeIds(node.id, links);
     if (linkNodeIds.length == 1) {
       let linkNode = nodes.filter((n) => n.id == linkNodeIds[0])[0];
-      console.log(linkNode);
+      //console.log(linkNode);
       let dv = getUnitVec(linkNode, centroid);
       let r = getRadius(node) + getRadius(linkNode);
       node.x = linkNode.x + dv.x * r;
       node.y = linkNode.y + dv.y * r;
-      console.log(`Placing leaf node ${node.id} at ${node.x}, ${node.y}`);
+      //console.log(`Placing leaf node ${node.id} at ${node.x}, ${node.y}`);
     } else if (linkNodeIds.length > 1) {
       console.log("uh oh");
     }
@@ -294,7 +293,7 @@ let layoutCluster = function (
     width,
     height
   );
-  console.log("centroid", centroid.x, centroid.y);
+  //console.log("centroid", centroid.x, centroid.y);
 
   write_layout(fullLayout, name, width, height, centroid);
 
@@ -308,9 +307,11 @@ let write_layout = function (layout, name, width, height) {
   const links = layout.links;
   // this callback function pre-renders the dataviz inside the html document,
   // then export result into a static html file
+  /*
   console.log(
     `Writing ${name} with ${nodes.length} nodes and ${links.length} links`
   );
+  */
 
   let el = window.document.querySelector("#dataviz-container");
 
@@ -412,7 +413,6 @@ let mmc_force_layout_friction = function (
     l.distance = r1 + r2;
   }
 
-  console.log("begin sim", iterations);
   console.log(JSON.stringify(mmc_nodes[0]));
   let simulation = d3
     .forceSimulation(mmc_nodes)
@@ -565,14 +565,14 @@ let mmc_force_layout = function (metametaclusters) {
       // If there are more than one clusters that connect to this one that we've placed already,
       // I guess just put it in between them??
       if (i == 0) {
-        console.log("Placing at /2/2");
+        //console.log("Placing at /2/2");
         center.x = WIDTH / 2;
         center.y = WIDTH / 2;
       } else {
         let mmc_links = getLinkedNodeIds(i, metametaclusters["edges"]).filter(
           (l) => l < i
         );
-        console.log(i, mmc_links);
+        //console.log(i, mmc_links);
         if (mmc_links.length == 1) {
           let mmc_id = mmc_links[0];
           // Get the center of the component we're going to link to, and
@@ -594,14 +594,14 @@ let mmc_force_layout = function (metametaclusters) {
               relevant_bridges.push(node_lookup[edge.target]);
             }
           }
-          console.log("relevant bridges:", relevant_bridges);
+          //console.log("relevant bridges:", relevant_bridges);
           let mmc_centroid = getCentroid(layouts[mmc_id]);
           let cx = d3.mean(relevant_bridges.map((n) => n.x));
           let cy = d3.mean(relevant_bridges.map((n) => n.y));
           let dv = getUnitVec({ x: cx, y: cy }, mmc_centroid);
           center.x = mmc_centroid.x + dv.x * 2000;
           center.y = mmc_centroid.y + dv.y * 2000;
-          console.log(`placing center at ${center.x}, ${center.y}`);
+          //console.log(`placing center at ${center.x}, ${center.y}`);
         } else {
           let xs = [];
           let ys = [];
@@ -611,9 +611,11 @@ let mmc_force_layout = function (metametaclusters) {
           }
           center.x = NaN; //d3.mean(xs);
           center.y = NaN; //d3.mean(ys);
+          /*
           console.log(
             `placing center at ${center.x}, ${center.y} using median strategy`
           );
+          */
         }
       }
     }

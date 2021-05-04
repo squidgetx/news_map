@@ -19,11 +19,20 @@
     "url": "https://github.com/squidgetx/news_map/issues"
   },
   "homepage": "https://github.com/squidgetx/news_map#readme",
-  "dependencies": {
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.14.0",
+    "@aws-sdk/credential-provider-cognito-identity": "^3.14.0",
     "argparse": "^2.0.1",
+    "aws-sdk": "^2.899.0",
     "d3": "^6.7.0",
     "d3-node": "^2.2.2",
     "fs": "0.0.1-security",
-    "jsdom": "^16.5.3"
+    "jsdom": "^16.5.3",
+    "svg-pan-zoom": "^3.6.1",
+    "webpack": "^5.36.2",
+    "webpack-cli": "^4.6.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity": "^3.14.0"
   }
 }
