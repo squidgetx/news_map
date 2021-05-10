@@ -5,7 +5,7 @@ import { S3Client, ListObjectsCommand } from "@aws-sdk/client-s3";
 const S3_BUCKET = "fogofwar";
 const AWS_REGION = "us-east-2";
 const TOPIC = "us_mainstream";
-const LOCAL = true;
+const LOCAL = false;
 
 async function checkFileExists(key) {
   const client = new S3Client({
