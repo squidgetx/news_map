@@ -7,6 +7,10 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 
+class Basename(Enum):
+    US_MAINSTREAM = "us_mainstream"
+
+
 class Datafile(Enum):
     RUST_CLUSTER_DESC = "cluster_descriptions.txt"
     RUST_LABELS = "labels.csv"
@@ -54,12 +58,16 @@ def getTopicSizes(name):
     return sizes
 
 
-def getDataNames(basename: str, datestr: str, interval: int):
-    start_date = datetime.fromisoformat(datestr)
+def getDataNames(basename: str, start_datestr: str, interval: int):
+    start_date = datetime.fromisoformat(start_datestr)
     return (
         f"data/raw/{basename}_{str((start_date + timedelta(days=d)).date())}.tsv"
         for d in range(interval)
     )
+
+
+def getBasename(filename: str):
+    return filename.split("/")[-1].split("_")[0]
 
 
 def getName(basename: str, datestr: str, interval: int):
@@ -74,6 +82,6 @@ def getPrevName(basename: str, datestr: str, interval: int, step: int):
     return basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
 
 
-def getEndDateStr(datestr: int, interval: int):
+def getEndDateStr(datestr: str, interval: int):
     end_date = datetime.fromisoformat(datestr) + timedelta(days=interval)
     return str(end_date.date())

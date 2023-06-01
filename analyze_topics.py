@@ -1,6 +1,6 @@
 # Python script to take an input corpus and output topics
 import inflect
-import random
+import pickle
 import util
 import tracery
 from tracery.modifiers import base_english
@@ -20,7 +20,8 @@ from gensim import corpora
 
 from collections import defaultdict
 import matplotlib.pyplot as plt
-import topic2tsne
+
+# import topic2tsne
 from names import getFile, Datafile
 import names
 
@@ -86,13 +87,14 @@ def score_sentiment(sentence):
 def get_degrees(name, topics_json):
     # Maybe this code should live in cluster_topics?
 
-    graph = nx.read_gpickle(getFile(name, Datafile.GRAPH_PICKLE))
-    for topic in topics_json:
-        try:
-            topics_json[topic]["degree"] = graph.degree[topic]
-        except:
-            pdb.set_trace()
-    return topics_json
+    with open(getFile(name, Datafile.GRAPH_PICKLE), "rb") as f:
+        graph = pickle.load(f)
+        for topic in topics_json:
+            try:
+                topics_json[topic]["degree"] = graph.degree[topic]
+            except:
+                pdb.set_trace()
+        return topics_json
 
 
 def get_name(topics_json, topic):

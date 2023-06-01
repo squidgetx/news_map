@@ -1,5 +1,6 @@
 # Python script to take an input corpus and output topics
 import subprocess
+import pickle
 import random
 import json
 import itertools
@@ -14,7 +15,8 @@ from gensim import corpora
 
 from collections import defaultdict
 import matplotlib.pyplot as plt
-import topic2tsne
+
+# import topic2tsne
 import names
 import util
 from names import getFile, Datafile
@@ -318,7 +320,7 @@ def cut_components(components, n=3):
                     {
                         "source": edge[0],
                         "target": edge[1],
-                        "weight": 8 / (it ** 0.5 + 1),
+                        "weight": 8 / (it**0.5 + 1),
                     }
                 )
             new_components.append(subgraph1)
@@ -340,7 +342,8 @@ def layout_graph(
     macroIter=70,
     terrible=False,
 ):
-    nx.write_gpickle(graph, getFile(name, Datafile.GRAPH_PICKLE))
+    with open(getFile(name, Datafile.GRAPH_PICKLE), "wb") as f:
+        pickle.dump(graph, f, pickle.HIGHEST_PROTOCOL)
 
     print("forming metaclusters")
     if initPositions:

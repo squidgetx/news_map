@@ -21,7 +21,7 @@ import os
 from gsdmm import MovieGroupProcess
 from scipy.spatial.distance import jensenshannon
 
-import topic2mds
+# import topic2mds
 import cluster_topics
 from analyze_topics import analyze_topics
 import subprocess
@@ -118,7 +118,7 @@ def clean(df):
     # clean df
     if "stories_id" in df:
         df = df.drop_duplicates(subset=["stories_id"])
-    df = df.dropna(subset=["title"])
+    df.dropna(subset=["title"], inplace=True)
     df["title"] = df["title"].replace(r"\\n", " ", regex=True)
     df["title"] = [strip_tags(s) for s in df["title"]]
     df["title"] = [None if s.startswith("http") else s for s in df["title"]]
@@ -433,6 +433,8 @@ def get_topics(
     assert scores_df["title"].notnull().all()
     scores_df["url"] = df["url"]
     scores_df["publish_date"] = df["publish_date"]
+    if "media_name" not in df:
+        df["media_name"] = df["domain"]
     media_names = df["media_name"].fillna("No Media Name")
     scores_df["media_name"] = media_names
     scores_df[["dominant_topic", "title", "media_name", "url", "publish_date"]].to_csv(
@@ -546,6 +548,8 @@ if __name__ == "__main__":
         help="whether or not to use WMD formatting",
     )
     args = parser.parse_args()
+    topics = []
+    name = ""
     if args.name:
         name = names.getName(args.name, args.start, args.interval)
 
@@ -582,6 +586,9 @@ if __name__ == "__main__":
         name = names.getName(basename, args.start, args.interval)
         topics = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
         dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))
+    else:
+        print("You need to either use the load or name arguments")
+        sys.exit()
 
     name2 = None
     if args.step:

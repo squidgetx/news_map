@@ -3,7 +3,7 @@
 
 import pdb
 import networkx as nx
-import scipy
+import pickle
 
 import numpy as np
 import itertools
@@ -159,42 +159,43 @@ class PolygonMap:
         """
         Add lakes if required given the input graph
         """
-        graph = nx.read_gpickle(getFile(name, Datafile.GRAPH_PICKLE))
-        # Basically, we want to examine each Voronoi ridge
-        # and if its corresponding edge doesn't exist in the input graph,
-        # then we "kill" it with a lake
-        extra_points = []
-        for i, pair in enumerate(self.rough_voronoi.ridge_points):
-            topicA = self.get_rough_topic(pair[0])
-            topicB = self.get_rough_topic(pair[1])
-            if topicA == -1 or topicB == -1:
-                # One of them is a water cell, so w/e
-                continue
-            if topicA == topicB:
-                # bordering yourself is OK
-                continue
-            if topicB in graph[topicA]:
-                # The edge exists in the graph, so it's OK.
-                continue
-            # If we reach this point, we have a Voronoi ridge
-            # that links two topics that SHOULD NOT have an edge
-            ridge_vertices = self.rough_voronoi.vertices[
-                self.rough_voronoi.ridge_vertices[i]
-            ]
-            extra_points.extend(self.create_lake_points(ridge_vertices))
+        with open(getFile(name, Datafile.GRAPH_PICKLE), "rb") as f:
+            graph = pickle.load(f)
+            # Basically, we want to examine each Voronoi ridge
+            # and if its corresponding edge doesn't exist in the input graph,
+            # then we "kill" it with a lake
+            extra_points = []
+            for i, pair in enumerate(self.rough_voronoi.ridge_points):
+                topicA = self.get_rough_topic(pair[0])
+                topicB = self.get_rough_topic(pair[1])
+                if topicA == -1 or topicB == -1:
+                    # One of them is a water cell, so w/e
+                    continue
+                if topicA == topicB:
+                    # bordering yourself is OK
+                    continue
+                if topicB in graph[topicA]:
+                    # The edge exists in the graph, so it's OK.
+                    continue
+                # If we reach this point, we have a Voronoi ridge
+                # that links two topics that SHOULD NOT have an edge
+                ridge_vertices = self.rough_voronoi.vertices[
+                    self.rough_voronoi.ridge_vertices[i]
+                ]
+                extra_points.extend(self.create_lake_points(ridge_vertices))
 
-        self.set_rough_points(
-            self.rough_topic_points,
-            pd.concat(
-                (
-                    self.rough_points,
-                    pd.DataFrame(extra_points, columns=["x", "y"]),
+            self.set_rough_points(
+                self.rough_topic_points,
+                pd.concat(
+                    (
+                        self.rough_points,
+                        pd.DataFrame(extra_points, columns=["x", "y"]),
+                    ),
+                    ignore_index=True,
                 ),
-                ignore_index=True,
-            ),
-        )
+            )
 
-        plt_voronoi(self.rough_points, self.topic_df)
+            plt_voronoi(self.rough_points, self.topic_df)
 
     def set_rough_points(self, topic_points, noise_pts):
         assert "x" in topic_points
@@ -498,7 +499,7 @@ class PolygonMap:
                 pd_heightmap[nonedge_neighbors] - self.elevation[i]
             )
             slope = np.mean(neighbor_slopes)
-            delta = np.min([flux ** 0.5 * slope / 100, 0.1])
+            delta = np.min([flux**0.5 * slope / 100, 0.1])
             self.elevation[i] -= delta
         # self.normalize()
 
