@@ -1,0 +1,14 @@
+5-28
+
+QOL improvements:
+
+- makefile or script arg editing so you can easily run the whole pipeline for one set of args
+- once topic2map has successfully run - how do you get it to S3?
+- would be great to save the labels since they aren't super well adjusted
+
+Must dos for preso:
+
+- Rerun topic map for higher def map
+- Figure out how to move labels around
+- What is terrain color I forgot
+- Upload live
