@@ -60,4 +60,8 @@ update src/files.js and src/main.js to use the new dates, run python -m http.ser
 
 In order to update the build site:
 
-git subtree push --prefix dist origin gh-pages
+```
+git subtree split --prefix dist master
+<returns token>
+git push origin <token>:gh-pages --force
+```
