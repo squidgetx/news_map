@@ -1,4 +1,5 @@
-mediacloud
+wayback-news-search
+pandas
 cython
 numpy
 scipy
@@ -11,3 +12,5 @@ np
 pyemd
 textblob
 tracery
+networkx
+inflect
