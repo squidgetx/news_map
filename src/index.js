@@ -11,6 +11,32 @@ let topicSizes = [];
 let topicMediaNames = [];
 let date = "2020-02-01";
 let interval = 28;
+//let date = '2023-05-01'
+//let interval = 26
+
+let pois = [
+  {
+    "x": -2132.2188604824105,
+    "y": -120.28837396163347,
+    z: 3,
+  },
+  {
+    "x": -4118.914625789113,
+    "y": -669.3422385388845,
+    z: 6.8,
+  }, {
+    "x": -8875.287737576948,
+    "y": -6053.478781411776,
+    z: 9.5
+  },
+  {
+    "x": -3111.678389000641,
+    "y": -7453.504697650802,
+    z: 9.0
+  }
+]
+
+let poi_index = -1;
 
 drawMaster();
 
@@ -145,9 +171,8 @@ function drawRegionsSVG() {
       svg = d3.select(selector).append("svg").attr("id", "map_main");
       let xExt = d3.extent(Object.values(vertex_data).map((r) => r.x));
       let yExt = d3.extent(Object.values(vertex_data).map((r) => r.y));
-      let vBox = `${xExt[0]} ${yExt[0]} ${xExt[1] - xExt[0]} ${
-        yExt[1] - yExt[0]
-      }`;
+      let vBox = `${xExt[0]} ${yExt[0]} ${xExt[1] - xExt[0]} ${yExt[1] - yExt[0]
+        }`;
       svg
         .attr("viewBox", vBox)
         .attr("width", window.innerWidth - SIDEBAR_WIDTH)
@@ -311,11 +336,12 @@ function drawRegionsSVG() {
       console.log(regionData.length, "triangles");
       let svg = renderRegionsSVG(regionData, vertexData);
       console.log("done constructing");
-      svgPanZoom("#map_main", {
+      let panControl = svgPanZoom("#map_main", {
         controlIconsEnabled: true,
         minZoom: 0.5,
         maxZoom: 12,
         onZoom: (zoom) => {
+          console.log(zoom)
           /*
           const RANGE = 4;
           const MAX = 27;
@@ -334,8 +360,29 @@ function drawRegionsSVG() {
           }
           */
         },
+        onPan: (pan) => {
+          console.log(pan)
+        }
       });
+      // code for manually jumping around for demo purposes
+      document.getElementById('poi').addEventListener('click', () => {
+        poi_index += 1
+        if (poi_index >= pois.length) {
+          poi_index = 0
+        }
+        panControl.zoom(pois[poi_index].z)
+        panControl.pan({ x: pois[poi_index].x, y: pois[poi_index].y })
+
+
+
+
+      })
     });
+
+
+
+
+
   });
 }
 
@@ -363,8 +410,7 @@ let renderDebugContent = function (topic_id) {
     })
     .map(
       (word_freq) =>
-        `<p class='word' style='font-size:${Math.sqrt(word_freq[1]) + 6}pt'>${
-          word_freq[0]
+        `<p class='word' style='font-size:${Math.sqrt(word_freq[1]) + 6}pt'>${word_freq[0]
         }</p>`
     )
     .join("");
@@ -375,8 +421,7 @@ let renderDebugContent = function (topic_id) {
     })
     .map(
       (word_freq) =>
-        `<p class='word' style='font-size:${Math.sqrt(word_freq[1]) + 6}pt'>${
-          word_freq[0]
+        `<p class='word' style='font-size:${Math.sqrt(word_freq[1]) + 6}pt'>${word_freq[0]
         }</p>`
     )
     .join("");

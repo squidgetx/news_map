@@ -4,7 +4,10 @@ import { S3Client, ListObjectsCommand } from "@aws-sdk/client-s3";
 
 const S3_BUCKET = "fogofwar";
 const AWS_REGION = "us-east-2";
+
+// Change these if you want to use a locally created map
 const TOPIC = "us_mainstream";
+//const TOPIC = 'us-mainstream-stories'
 const LOCAL = false;
 
 async function checkFileExists(key) {
