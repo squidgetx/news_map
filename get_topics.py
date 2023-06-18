@@ -4,6 +4,8 @@ import json
 import logging
 import sys
 import time
+import datetime
+from pathlib import Path
 
 import gensim
 import gensim.downloader as api
@@ -191,7 +193,7 @@ def sentences_to_gsdmm_rust(dictionary, corpus, num_topics, name, alpha=0.1, bet
             "gsdmm-rust/target/release/gsdmm",
             "data/sentences.txt",
             "data/vocabfile.txt",
-            f"data/{name}",
+            f"data/{name}.",
             "-k",
             str(num_topics),
             "-a",
@@ -478,7 +480,7 @@ def calculate_intertopic_distances(dictionary, topics, dictionary2, topics2):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train topic model on input text")
-    parser.add_argument("-name", dest="name", help="filename for training")
+    parser.add_argument("-name", dest="name", help="filename for training", default=names.Basename.US_MAINSTREAM)
     parser.add_argument("-load", dest="load", help="name for loading")
     parser.add_argument(
         "-sample",
@@ -551,10 +553,16 @@ if __name__ == "__main__":
     topics = []
     name = ""
     if args.name:
-        name = names.getName(args.name, args.start, args.interval)
+        basename = names.Basename[args.name]
+        name = names.getName(
+            basename,
+            datetime.datetime.fromisoformat(args.start), 
+            args.interval
+        )
+        Path(os.path.dirname("data/" + name)).mkdir(parents=True, exist_ok=True)
 
         logging.info(f"Opening data files...")
-        dnames = names.getDataNames(args.name, args.start, args.interval)
+        dnames = names.getDataNames(basename, args.start, args.interval)
         df = pd.concat((pd.read_csv(f, sep="\t", memory_map=True) for f in dnames))
         print(f"Reading {len(df)} rows...")
         df = clean(df)
@@ -582,7 +590,7 @@ if __name__ == "__main__":
         np.save(getFile(name, Datafile.TOPIC_NDARRAY), topics)
 
     elif args.load:
-        basename = args.load
+        basename = names.Basename[args.load]
         name = names.getName(basename, args.start, args.interval)
         topics = np.load(getFile(name, Datafile.TOPIC_NDARRAY))
         dictionary = corpora.Dictionary.load(getFile(name, Datafile.DICTIONARY))

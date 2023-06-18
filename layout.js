@@ -718,7 +718,7 @@ for (let metacluster of metaclusters) {
     (n) =>
       Math.sqrt(
         (n.x - centroid.x) * (n.x - centroid.x) +
-          (n.y - centroid.y) * (n.y - centroid.y)
+        (n.y - centroid.y) * (n.y - centroid.y)
       ) + getRadius(n)
   );
   distances.push(d3.max(dist));

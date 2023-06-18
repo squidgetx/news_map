@@ -1,3 +1,14 @@
+6-17
+
+First milestone is automated launch of some kind.
+
+- for later - db instead of fs
+- we achieved the makefile making the whole map, yay
+- i think the next step is to propagate this to the frontend for QOL - eg, with a 'latest' tag or something just for ease of development
+- other things we have to do are figure out the correct number of clusters and map resolution.
+- then, label placement / zoom ugh lol
+- also refactor / move pre-processing somewhere earlier in the chain?
+
 5-28
 
 QOL improvements:

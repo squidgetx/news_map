@@ -1,13 +1,16 @@
 from waybacknews.searchapi import SearchApiClient
 import datetime as dt
+from dateutil.relativedelta import relativedelta
 import csv
-import pdb
+import os
 import argparse
+from pathlib import Path
 import names
+
+from splitter import split
 
 api = SearchApiClient("mediacloud")
 
-NAME = "us-mainstream-stories"
 # From the mediacloude top newspapers 2018 collection
 websites = [
     "nytimes.com",
@@ -41,13 +44,13 @@ arg_parser.add_argument(
     "-start",
     dest="start",
     required=True,
-    help="ISO formatted start date for query (ex: 2020-01-01)",
+    help="ISO formatted start date for query (ex: 2020-01-01), defaults to the first of the current month",
 )
 arg_parser.add_argument(
     "-end",
     dest="end",
     required=False,
-    help="ISO formatted end date for query (ex: 2020-01-31). Defaults to today.",
+    help="ISO formatted end date for query (ex: 2020-01-31). Defaults to 1 month after the start date.",
 )
 arg_parser.add_argument(
     "-keyword", dest="keyword", required=False, help="keyword to search for"
@@ -55,8 +58,12 @@ arg_parser.add_argument(
 
 args = arg_parser.parse_args()
 start_dt = dt.datetime.fromisoformat(args.start)
-end_dt = dt.datetime.fromisoformat(args.end)
-interval = (start_dt - end_dt).days
+if args.end:
+    end_dt = dt.datetime.fromisoformat(args.end)
+else:
+    end_dt = start_dt + relativedelta(months=1)
+
+interval = (end_dt - start_dt).days
 
 records = []
 for website in websites:
@@ -75,9 +82,12 @@ for website in websites:
             )
 print(len(records))
 
-name = names.getName(NAME, args.end, interval)
+name = names.getName(names.Basename.US_MAINSTREAM, start_dt, interval)
 filename = names.getFile(name, names.Datafile.HEADLINES_TSV)
+Path(os.path.dirname(filename)).mkdir(parents=True, exist_ok=True)
 with open(filename, "w") as outfile:
     writer = csv.DictWriter(outfile, fieldnames=records[0].keys(), delimiter="\t")
     writer.writeheader()
     writer.writerows(records)
+
+split(filename)

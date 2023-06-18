@@ -28,22 +28,10 @@ nltk.download('stopwords')
 python get_stories_wayback --start <st> --end <et>
 ```
 
-## Clean and prep the data
-
-```
-python splitter.py <filename>
-```
-
-## Train a new topic model
+## Train a new topic model (and builds layout)
 
 ```
 python get_topics.py -name us-mainstream-stories -start <st>
-```
-
-## Build a layout
-
-```
-node layout.js -name us-mainstream-stories_NAME
 ```
 
 ## Build the map
@@ -54,7 +42,10 @@ python topic2map.py -name -start -i
 
 ## Test the map
 
-update src/files.js and src/main.js to use the new dates, run python -m http.server and localhost:8000/dist shows the map. click and drag labels
+update src/files.js and src/index.js to use the new dates, run
+npx webpack
+python -m http.server
+and visit localhost:8000/dist to see the map. click and drag labels
 
 # Build
 

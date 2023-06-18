@@ -8,13 +8,13 @@ from datetime import datetime, timedelta
 
 
 class Basename(Enum):
-    US_MAINSTREAM = "us_mainstream"
+    US_MAINSTREAM = "usm"
 
 
 class Datafile(Enum):
-    RUST_CLUSTER_DESC = "cluster_descriptions.txt"
-    RUST_LABELS = "labels.csv"
-    RUST_PROBABILITIES = "label_probabilities.csv"
+    RUST_CLUSTER_DESC = ".cluster_descriptions.txt"
+    RUST_LABELS = ".labels.csv"
+    RUST_PROBABILITIES = ".label_probabilities.csv"
     DICTIONARY = ".dictionary"
     TOPIC_NDARRAY = ".topic_ndarray.npy"
     TOPIC_JSON = ".topics.json"
@@ -58,10 +58,10 @@ def getTopicSizes(name):
     return sizes
 
 
-def getDataNames(basename: str, start_datestr: str, interval: int):
+def getDataNames(basename: Basename, start_datestr: str, interval: int):
     start_date = datetime.fromisoformat(start_datestr)
     return (
-        f"data/raw/{basename}_{str((start_date + timedelta(days=d)).date())}.tsv"
+        f"data/raw/{basename.value}_{str((start_date + timedelta(days=d)).date())}.tsv"
         for d in range(interval)
     )
 
@@ -70,16 +70,14 @@ def getBasename(filename: str):
     return filename.split("/")[-1].split("_")[0]
 
 
-def getName(basename: str, datestr: str, interval: int):
-    start_date = datetime.fromisoformat(datestr)
-    end_date = start_date + timedelta(days=interval)
-    return basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
+def getName(basename: Basename, dt: datetime, interval: int):
+    return str(dt.date()) + "_" + str(interval) + f"/{basename.value}"
 
 
 def getPrevName(basename: str, datestr: str, interval: int, step: int):
     start_date = datetime.fromisoformat(datestr) - timedelta(days=step)
     end_date = datetime.fromisoformat(datestr) + timedelta(days=interval - step)
-    return basename + "_" + str(start_date.date()) + "_" + str(end_date.date())
+    return str(start_date.date()) + "_" + str(end_date.date()) + f"/{str(basename)}"
 
 
 def getEndDateStr(datestr: str, interval: int):

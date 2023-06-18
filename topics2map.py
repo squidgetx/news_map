@@ -4,6 +4,7 @@
 import pdb
 import networkx as nx
 import pickle
+import datetime as datetime
 
 import numpy as np
 import itertools
@@ -702,7 +703,11 @@ if __name__ == "__main__":
         help="if provided, output intermediate matplotlibs",
     )
     args = parser.parse_args()
-    name = names.getName(args.name, args.start, args.interval)
+    name = names.getName(
+        names.Basename[args.name], 
+        datetime.datetime.fromisoformat(args.start), 
+        args.interval
+    )
 
     topic_df = pd.read_csv(
         getFile(name, Datafile.TOPIC_METADATA_TSV), sep="\t", index_col=0
