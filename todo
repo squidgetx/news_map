@@ -1,4 +1,4 @@
-6-17
+# 6-17
 
 First milestone is automated launch of some kind.
 
@@ -8,8 +8,9 @@ First milestone is automated launch of some kind.
 - other things we have to do are figure out the correct number of clusters and map resolution.
 - then, label placement / zoom ugh lol
 - also refactor / move pre-processing somewhere earlier in the chain?
+- then, frontend needs to know which maps are available and scrollability (well actually this is a pretty involved feature and requires date UI, etc. etc. might be better just have 'latest' for now?)
 
-5-28
+# 5-28
 
 QOL improvements:
 
